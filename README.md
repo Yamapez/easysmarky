@@ -9,6 +9,7 @@
 - 「下書き保存」までを自動化します。**提出は行いません**(公式画面から手動で行ってください)
 - 手書き・画像の解答が含まれる回答用紙は、データ消失を防ぐため保存自体を無効化します
 - PC・スマートフォン(iOS Safari / Android Chrome)どちらでも動作します
+  (Android Chromeでブックマークレット版を使う場合、起動方法に注意が必要です → [Android Chrome](#android-chrome))
 
 導入方法は2通りあり、どちらか一方でかまいません(併用も可)。
 
@@ -50,8 +51,12 @@ Chromeのまま使いたい場合は下記のブックマークレット版を�
 で公開済みです。以下の1行をそのままブックマークの「URL」欄に貼り付ければ使えます。
 
 ```
-javascript:(function(){if(window.__easysmarky){window.__easysmarky.toggle();return;}var s=document.createElement("script");s.src="https://yamapez.github.io/easysmarky/easysmarky.iife.js?v="+Date.now();document.body.appendChild(s);})();
+javascript:(function(){var u="https://yamapez.github.io/easysmarky/easysmarky.iife.js";try{if(window.__easysmarky){window.__easysmarky.toggle();return;}if(window.__easysmarkyLoading)return;window.__easysmarkyLoading=true;var s=document.createElement("script");s.src=u+"?v="+Date.now();s.onload=function(){window.__easysmarkyLoading=false;};s.onerror=function(){window.__easysmarkyLoading=false;alert("easysmarky: スクリプトを読み込めませんでした。\n通信環境やネットワーク側の制限をご確認ください。\n"+u);};(document.body||document.documentElement).appendChild(s);}catch(e){window.__easysmarkyLoading=false;alert("easysmarky: 起動に失敗しました。\n"+e);}})();
 ```
+
+> **すでに古い1行コードを登録済みの方へ**: 上記は読み込み失敗を画面に表示し、
+> 二重タップによる誤動作を防ぐように更新したものです。ブックマークのURLを
+> 貼り替えると、起動しないときの原因がわかりやすくなります。
 
 (このリポジトリを自分でフォークして別URLにホストする場合は、`bookmarklet/loader.js` の
 `SCRIPT_URL` を書き換えたうえで同様に1行へ圧縮してください)
@@ -70,11 +75,23 @@ javascript:(function(){if(window.__easysmarky){window.__easysmarky.toggle();retu
 
 ### Android Chrome
 
-1. アドレスバーの右のメニュー→「ブックマークを追加」で適当なページをブックマーク
-2. ブックマークを開き、編集アイコンからURLを上記の1行コードに書き換える
-3. Smarkyをブラウザで開き、アドレスバーに「easysmarky」と入力してブックマークから起動
+> **重要: ブックマーク一覧からタップしても起動しません。**
+> ☆マークの一覧やブックマークマネージャから開いた場合、Chromeは「いま開いているページ」を
+> 対象にできないため、`javascript:` が実行されず**何も起こりません**(Android版Chromeの仕様です)。
+> 必ず下記3の**アドレスバー経由**で起動してください。
 
-もう一度ブックマークをクリック(タップ)すると、開いている画面の表示/非表示を切り替えます。
+1. アドレスバーの右のメニュー→「ブックマークを追加」で適当なページをブックマーク
+2. ブックマークを開き、編集アイコンからURLを上記の1行コードに書き換える。
+   このとき**名前を「es」など短いものに変えておく**と、次の手順で候補に出しやすくなります
+3. Smarkyをブラウザで開き、**アドレスバーをタップして「es」と入力**。
+   表示された候補(ブックマーク)をタップすると起動します
+
+もう一度起動すると、開いている画面の表示/非表示を切り替えます
+(Android Chromeでは、この操作も上記3と同じくアドレスバー経由で行ってください)。
+
+**起動しないときは**、反応がなくても連打しないでください。読み込みには数秒かかることがあります。
+読み込みに失敗した場合はエラーが表示されます。何も表示されないまま起動しない場合は、
+アドレスバー経由で実行できているかをもう一度ご確認ください。
 
 ## 開発
 
