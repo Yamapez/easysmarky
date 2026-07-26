@@ -1,14 +1,48 @@
 # easysmarky
 
 学校のデジタルレポート提出サイト「Smarky」( https://digi-repo.smarky.jp )の入力を
-もっと楽にするためのブックマークレットです。用紙画像の上にテキストボックスを1個ずつ
-配置していくSmarky公式のキャンバスUIの代わりに、全設問を普通のフォームで一気に
-入力できる画面を重ねて表示します。
+もっと楽にするためのブックマークレット/ユーザースクリプトです。用紙画像の上に
+テキストボックスを1個ずつ配置していくSmarky公式のキャンバスUIの代わりに、
+全設問を普通のフォームで一気に入力できる画面を重ねて表示します。
 
 - ログインは既存のブラウザのSmarkyセッションをそのまま使います(パスワードは一切扱いません)
 - 「下書き保存」までを自動化します。**提出は行いません**(公式画面から手動で行ってください)
 - 手書き・画像の解答が含まれる回答用紙は、データ消失を防ぐため保存自体を無効化します
 - PC・スマートフォン(iOS Safari / Android Chrome)どちらでも動作します
+
+導入方法は2通りあり、どちらか一方でかまいません(併用も可)。
+
+- **ユーザースクリプト版**: Smarkyのページを開くと右下に起動ボタンが常駐。自動更新あり。導入には拡張機能/アプリが必要
+- **ブックマークレット版**: 追加ソフト不要でどのブラウザでも使えるが、登録手順がやや煩雑
+
+## 使い方(ユーザースクリプトの導入)
+
+Tampermonkey などのユーザースクリプトマネージャーに
+https://yamapez.github.io/easysmarky/easysmarky.user.js を登録します。
+導入後は Smarky のページを開くと右下に「easysmarky」ボタンが表示され、
+タップすると入力画面が開閉します。新しいバージョンは自動更新で配信されます。
+
+### PC(Chrome / Edge / Firefox)
+
+1. 拡張機能ストアから「Tampermonkey」(または Violentmonkey)をインストール
+2. https://yamapez.github.io/easysmarky/easysmarky.user.js を開くと
+   インストール確認画面が出るので「インストール」を押す
+
+※Chrome系でインストール画面が出ない場合は、拡張機能の設定で
+「デベロッパーモード」を有効にする必要があります(Tampermonkeyの仕様)。
+
+### iOS Safari
+
+1. App Storeから「Userscripts」アプリ(無料)をインストール
+2. 設定→Safari→拡張機能 で Userscripts を有効化
+3. Safariで https://yamapez.github.io/easysmarky/easysmarky.user.js を開き、
+   アドレスバーの拡張機能アイコン→Userscripts からインストール
+
+### Android
+
+Android版Chromeは拡張機能に対応していないため、ユーザースクリプト版を使う場合は
+Firefox(+Tampermonkey)などの対応ブラウザをご利用ください。
+Chromeのまま使いたい場合は下記のブックマークレット版をどうぞ。
 
 ## 使い方(ブックマークレットの登録)
 
@@ -46,9 +80,13 @@ javascript:(function(){if(window.__easysmarky){window.__easysmarky.toggle();retu
 
 ```bash
 npm install
-npm run build   # dist/easysmarky.iife.js を生成
-npm run dev     # watchモードでビルド
+npm run build   # dist/easysmarky.iife.js と dist/easysmarky.user.js を生成
+npm run dev     # watchモードでビルド(ブックマークレット版のみ)
 ```
+
+ユーザースクリプト版のバージョン(`@version`)は `package.json` の `version` を
+そのまま埋め込みます。自動更新はこの値の比較で動くため、
+**リリース時は必ず `version` を上げてください。**
 
 型チェックのみ行う場合:
 
@@ -58,9 +96,9 @@ npm run dev     # watchモードでビルド
 
 ## デプロイ(GitHub Pages)
 
-`gh-pages` ブランチのルートに `easysmarky.iife.js` と `index.html` を置く形で
-GitHub Pagesを公開しています( https://yamapez.github.io/easysmarky/ )。
-更新する場合は `npm run build` で `dist/easysmarky.iife.js` を再生成し、
+`gh-pages` ブランチのルートに `easysmarky.iife.js`・`easysmarky.user.js`・
+`index.html` を置く形でGitHub Pagesを公開しています( https://yamapez.github.io/easysmarky/ )。
+更新する場合は `npm run build` で `dist/` の両ファイルを再生成し、
 `gh-pages` ブランチの同名ファイルを差し替えてコミット・プッシュしてください
 (mainブランチのソースとは別管理です)。ブックマークレットのローダーは
 `?v=<timestamp>` を自動付与するため、ブラウザキャッシュを気にせず更新を反映できます。

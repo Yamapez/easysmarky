@@ -1,11 +1,11 @@
 {
   "name": "easysmarky",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite build --watch --mode development",
-    "build": "vite build",
+    "build": "vite build && vite build --mode userscript",
     "preview": "vite preview"
   },
   "devDependencies": {
