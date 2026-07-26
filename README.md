@@ -12,29 +12,32 @@
 
 ## 使い方(ブックマークレットの登録)
 
-1. 本リポジトリをビルドし、`dist/easysmarky.iife.js` をどこかにホストします(下記「デプロイ」参照)。
-2. `bookmarklet/loader.js` を開き、`SCRIPT_URL` を自分のホスティング先のURLに書き換えます。
-3. コメント行を除いた本体(`javascript: (function () {...})();`)を1行に圧縮します。
-   (改行やインデントを削除するだけです。オンラインのJS圧縮ツールや、エディタの
-   「選択範囲を1行に結合」機能などで構いません)
-4. 1行にした文字列をブックマークの「URL」欄に貼り付けて保存します。
+スクリプト本体は GitHub Pages( https://yamapez.github.io/easysmarky/easysmarky.iife.js )
+で公開済みです。以下の1行をそのままブックマークの「URL」欄に貼り付ければ使えます。
+
+```
+javascript:(function(){if(window.__easysmarky){window.__easysmarky.toggle();return;}var s=document.createElement("script");s.src="https://yamapez.github.io/easysmarky/easysmarky.iife.js?v="+Date.now();document.body.appendChild(s);})();
+```
+
+(このリポジトリを自分でフォークして別URLにホストする場合は、`bookmarklet/loader.js` の
+`SCRIPT_URL` を書き換えたうえで同様に1行へ圧縮してください)
 
 ### PC(Chrome / Safari など)
 
 - ブックマークバーを表示し、右クリック→「ページを追加」などでブックマークを新規作成
-- 名前を「easysmarky」、URLに手順3で作った1行のコードを貼り付けて保存
+- 名前を「easysmarky」、URLに上記の1行コードを貼り付けて保存
 - Smarkyのレポート画面を開いた状態でブックマークをクリックすると起動します
 
 ### iOS Safari
 
-1. 適当なページ(例: このリポジトリのGitHub Pages)をいったんブックマークに追加
-2. 「ブックマークを編集」からそのブックマークのURLを手順3のコードに書き換える
+1. 適当なページ(例: https://yamapez.github.io/easysmarky/ )をいったんブックマークに追加
+2. 「ブックマークを編集」からそのブックマークのURLを上記の1行コードに書き換える
 3. Smarkyをブラウザで開き、共有メニュー→ブックマークからeasysmarkyを選択して起動
 
 ### Android Chrome
 
 1. アドレスバーの右のメニュー→「ブックマークを追加」で適当なページをブックマーク
-2. ブックマークを開き、編集アイコンからURLを手順3のコードに書き換える
+2. ブックマークを開き、編集アイコンからURLを上記の1行コードに書き換える
 3. Smarkyをブラウザで開き、アドレスバーに「easysmarky」と入力してブックマークから起動
 
 もう一度ブックマークをクリック(タップ)すると、開いている画面の表示/非表示を切り替えます。
@@ -55,10 +58,12 @@ npm run dev     # watchモードでビルド
 
 ## デプロイ(GitHub Pages)
 
-`dist/easysmarky.iife.js` をGitHub Pagesなど任意の静的ホスティングに置き、
-そのURLを `bookmarklet/loader.js` の `SCRIPT_URL` に設定してください。
-更新のたびにブラウザキャッシュが古いファイルを読まないよう、ローダーは
-`?v=<timestamp>` を自動付与します。
+`gh-pages` ブランチのルートに `easysmarky.iife.js` と `index.html` を置く形で
+GitHub Pagesを公開しています( https://yamapez.github.io/easysmarky/ )。
+更新する場合は `npm run build` で `dist/easysmarky.iife.js` を再生成し、
+`gh-pages` ブランチの同名ファイルを差し替えてコミット・プッシュしてください
+(mainブランチのソースとは別管理です)。ブックマークレットのローダーは
+`?v=<timestamp>` を自動付与するため、ブラウザキャッシュを気にせず更新を反映できます。
 
 ## 使い方(アプリ本体)
 
