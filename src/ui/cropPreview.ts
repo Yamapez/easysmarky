@@ -1,4 +1,5 @@
-function toImageSrc(base64OrDataUrl: string): string {
+/** APIが返す base64(またはdata URL)を <img>/Image に渡せる src に整える */
+export function toImageSrc(base64OrDataUrl: string): string {
   return base64OrDataUrl.startsWith("data:") ? base64OrDataUrl : `data:image/jpeg;base64,${base64OrDataUrl}`;
 }
 

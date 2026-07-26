@@ -3,47 +3,67 @@ export const OVERLAY_STYLES = `
 .es-root {
   position: fixed;
   inset: 0;
+  height: 100vh;   /* dvh 未対応ブラウザ向けのフォールバック */
+  height: 100dvh;  /* iOS Safari のツールバー分を除いた実際の表示高さ */
   z-index: 2147483000;
-  background: rgba(0, 0, 0, 0.45);
+  background: #fff;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", sans-serif;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  overflow-y: auto;
-  padding: 0;
+  overflow: hidden; /* スクロールは内側のペインが持つ */
 }
 .es-panel {
   background: #fff;
   color: #222;
   width: 100%;
-  max-width: 720px;
-  min-height: 100vh;
-  padding: 12px 14px 96px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
 }
-@media (min-width: 760px) {
-  .es-panel {
-    min-height: auto;
-    margin: 24px auto;
-    border-radius: 10px;
-    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
-  }
+/* flex の子をスクロールさせるには min-height:0 が必須(省くと内容がはみ出す) */
+.es-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 一覧・エラーなど、全画面幅に広げると読みにくいものを中央カラムに収める */
+.es-column {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 14px 40px;
 }
 .es-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-bottom: 10px;
+  padding: 8px 12px;
   border-bottom: 2px solid #2196c9;
-  margin-bottom: 12px;
-  position: sticky;
-  top: 0;
   background: #fff;
-  z-index: 1;
 }
 .es-title {
   font-size: 16px;
   font-weight: bold;
+}
+.es-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.es-header-btn {
+  border: 1px solid #2196c9;
+  background: #fff;
+  color: #2196c9;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 14px;
+  min-height: 40px;
 }
 .es-close {
   border: none;
@@ -169,8 +189,9 @@ export const OVERLAY_STYLES = `
   bottom: 0;
   background: #fff;
   border-top: 1px solid #ddd;
-  padding: 10px 0 4px;
-  margin-top: 8px;
+  /* スクロールコンテナ(.es-pane-form)の左右パディング分を打ち消して端まで背景を敷く */
+  margin: 8px -12px 0;
+  padding: 10px 12px 4px;
 }
 .es-save-btn {
   width: 100%;
@@ -203,5 +224,148 @@ export const OVERLAY_STYLES = `
   font-size: 14px;
   padding: 8px 0;
   min-height: 40px;
+}
+
+/* ===== 問題ビューアと入力フォームの2ペイン ===== */
+.es-form-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.es-pane-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  border-bottom: 1px solid #ddd;
+}
+.es-pane-tabs button {
+  flex: 1 1 50%;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: #f5f5f5;
+  color: #555;
+  font-size: 14px;
+  min-height: 44px;
+}
+.es-pane-tabs button.active {
+  background: #fff;
+  color: #2196c9;
+  font-weight: bold;
+  border-bottom-color: #2196c9;
+}
+.es-pane-question {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.es-pane-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+}
+/* スマホ: data-pane で一方だけを表示する */
+.es-form-layout[data-pane="form"] .es-pane-question { display: none; }
+.es-form-layout[data-pane="question"] .es-pane-form { display: none; }
+
+/* ===== 問題ページビューア ===== */
+.es-viewer {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #eceff1;
+}
+.es-viewer-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+}
+.es-viewer-bar button {
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  border-radius: 6px;
+  min-width: 40px;
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+.es-viewer-bar button:disabled {
+  color: #bbb;
+  background: #f5f5f5;
+}
+.es-viewer-tabs {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+}
+.es-viewer-tabs button.active {
+  background: #2196c9;
+  border-color: #2196c9;
+  color: #fff;
+  font-weight: bold;
+}
+.es-viewer-pager,
+.es-viewer-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.es-viewer-count {
+  font-size: 13px;
+  color: #555;
+  min-width: 46px;
+  text-align: center;
+}
+.es-viewer-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.es-viewer-img {
+  display: block;
+  /* 幅を変えることでスクロール可能領域も広がる。transform: scale() だとレイアウトが
+     変わらず拡大時に画像の端へスクロールできないため、width で拡大する */
+  width: 100%;
+  max-width: none;
+  height: auto;
+}
+.es-viewer-empty {
+  padding: 30px 12px;
+  text-align: center;
+  color: #666;
+  font-size: 13px;
+}
+.es-field-pagelink {
+  border: none;
+  background: transparent;
+  color: #2196c9;
+  font-size: 13px;
+  padding: 4px 0;
+  min-height: 32px;
+}
+
+/* ===== PC: 2カラム。data-pane による display:none を同詳細度・後勝ちで打ち消す ===== */
+@media (min-width: 900px) {
+  .es-pane-tabs { display: none; }
+  .es-form-layout { flex-direction: row; }
+  .es-form-layout[data-pane] .es-pane-question {
+    display: flex;
+    flex: 0 0 46%;
+    border-right: 1px solid #ddd;
+  }
+  .es-form-layout[data-pane] .es-pane-form {
+    display: block;
+    flex: 1 1 54%;
+  }
 }
 `;

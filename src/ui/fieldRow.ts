@@ -2,18 +2,22 @@ import { Direction } from "../api/types";
 import type { EditableField } from "../model/field";
 import { measureText } from "../render/measure";
 import { renderAnswerText } from "../render/renderText";
-import { drawCropPreview } from "./cropPreview";
+import { drawCropPreview, toImageSrc } from "./cropPreview";
 
 export interface FieldRowOptions {
   field: EditableField;
   pageImage: string | null;
   cutMargin: number;
   onChange: (field: EditableField) => void;
+  /** 問題ビューアをこの設問のページへ送る */
+  onShowPage?: (page: number) => void;
 }
 
 export interface FieldRowHandle {
   element: HTMLElement;
   getField: () => EditableField;
+  /** 行を作り直す前に呼ぶ。ResizeObserver を切る */
+  destroy: () => void;
 }
 
 function fieldLabel(field: EditableField): string {
@@ -35,12 +39,22 @@ export function createFieldRow(opts: FieldRowOptions): FieldRowHandle {
   labelEl.innerHTML = `<span>${fieldLabel(field)}</span>`;
   el.appendChild(labelEl);
 
+  const onShowPage = opts.onShowPage;
+  if (onShowPage) {
+    const pageLink = document.createElement("button");
+    pageLink.type = "button";
+    pageLink.className = "es-field-pagelink";
+    pageLink.textContent = "この設問のページを見る";
+    pageLink.addEventListener("click", () => onShowPage(field.raw.page));
+    el.appendChild(pageLink);
+  }
+
   if (!field.isEditableText) {
     const note = document.createElement("div");
     note.className = "es-field-locked";
     note.textContent = "この設問は選択肢・画像などの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
     el.appendChild(note);
-    return { element: el, getField: () => field };
+    return { element: el, getField: () => field, destroy: () => {} };
   }
 
   if (field.hasExtraStamps) {
@@ -48,7 +62,7 @@ export function createFieldRow(opts: FieldRowOptions): FieldRowHandle {
     note.className = "es-field-locked";
     note.textContent = "この設問には複数の解答が既に入力されています。現バージョンのeasysmarkyでは編集できません。";
     el.appendChild(note);
-    return { element: el, getField: () => field };
+    return { element: el, getField: () => field, destroy: () => {} };
   }
 
   // 切り抜きプレビュー + テキストプレビューのオーバーレイ
@@ -71,6 +85,10 @@ export function createFieldRow(opts: FieldRowOptions): FieldRowHandle {
 
   function updatePreview(): void {
     if (!opts.pageImage || !cropCanvas.width) return;
+    // タブで非表示の間は表示幅が0になり、正しいスケールを出せない。
+    // 再表示されたら下の ResizeObserver が呼び直す。
+    const renderedWidth = cropCanvas.getBoundingClientRect().width;
+    if (renderedWidth <= 0) return;
     const trimmed = field.text.trim();
     if (!trimmed) {
       overlayImg.style.display = "none";
@@ -97,7 +115,7 @@ export function createFieldRow(opts: FieldRowOptions): FieldRowHandle {
       color: field.color,
       direction: field.direction,
     });
-    const scale = cropCanvas.getBoundingClientRect().width / cropCanvas.width || 1;
+    const scale = renderedWidth / cropCanvas.width;
     overlayImg.src = `data:image/png;base64,${png}`;
     overlayImg.style.left = `${x * scale}px`;
     overlayImg.style.top = `${y * scale}px`;
@@ -155,9 +173,18 @@ export function createFieldRow(opts: FieldRowOptions): FieldRowHandle {
   if (opts.pageImage) {
     const img = new Image();
     img.onload = () => window.requestAnimationFrame(updatePreview);
-    img.src = opts.pageImage.startsWith("data:") ? opts.pageImage : `data:image/jpeg;base64,${opts.pageImage}`;
+    img.src = toImageSrc(opts.pageImage);
   }
   window.setTimeout(updatePreview, 50);
 
-  return { element: el, getField: () => field };
+  // 2カラム化・タブ切替・ウィンドウリサイズ・画面回転で表示幅が変わると
+  // オーバーレイ画像の位置がずれるため、幅の変化を見て描き直す。
+  const resizeObserver = new ResizeObserver(() => updatePreview());
+  resizeObserver.observe(cropCanvas);
+
+  return {
+    element: el,
+    getField: () => field,
+    destroy: () => resizeObserver.disconnect(),
+  };
 }

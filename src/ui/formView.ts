@@ -5,12 +5,16 @@ import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
 import { debounce, loadBackup, saveBackup, type SheetBackup } from "../storage/backup";
 import { createFieldRow, type FieldRowHandle } from "./fieldRow";
+import { createPageViewer, pageArrayIndex } from "./pageViewer";
 import type { SelectedSheet } from "./sheetPicker";
 
 export interface FormViewOptions {
   sheet: SelectedSheet;
   onBack: () => void;
 }
+
+/** 2ペインが横並びになる幅。styles.ts の @media (min-width: 900px) と一致させること */
+const TWO_PANE_MIN_WIDTH = 900;
 
 export async function renderFormView(container: HTMLElement, opts: FormViewOptions): Promise<void> {
   container.innerHTML = '<div class="es-loading">読み込み中...</div>';
@@ -27,21 +31,61 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   const report = await fetchDigitalReport(query);
   const cutMargin = report.cut_margin;
   const pageImages = report.base64_answer_images ?? [];
+  const questionImages = report.base64_question_images ?? [];
 
   container.innerHTML = "";
+
+  // 左(PC)/「問題」タブ(スマホ) = 問題ページビューア、右/「解答」タブ = 入力フォーム
+  const layout = document.createElement("div");
+  layout.className = "es-form-layout";
+  container.appendChild(layout);
+
+  // スマホ用の表示切替タブ。PCではCSSで隠され、2カラムで両方表示される
+  const tabs = document.createElement("div");
+  tabs.className = "es-pane-tabs";
+  const questionTabBtn = document.createElement("button");
+  questionTabBtn.type = "button";
+  questionTabBtn.textContent = "問題";
+  const formTabBtn = document.createElement("button");
+  formTabBtn.type = "button";
+  formTabBtn.textContent = "解答";
+  tabs.appendChild(questionTabBtn);
+  tabs.appendChild(formTabBtn);
+  layout.appendChild(tabs);
+
+  function showPane(pane: "question" | "form"): void {
+    layout.dataset.pane = pane;
+    questionTabBtn.classList.toggle("active", pane === "question");
+    formTabBtn.classList.toggle("active", pane === "form");
+  }
+
+  const questionPane = document.createElement("div");
+  questionPane.className = "es-pane-question";
+  const viewer = createPageViewer({ questionImages, answerImages: pageImages });
+  questionPane.appendChild(viewer.element);
+  layout.appendChild(questionPane);
+
+  const formPane = document.createElement("div");
+  formPane.className = "es-pane-form";
+  layout.appendChild(formPane);
+
+  showPane("form");
+
+  questionTabBtn.addEventListener("click", () => showPane("question"));
+  formTabBtn.addEventListener("click", () => showPane("form"));
 
   const backBtn = document.createElement("button");
   backBtn.type = "button";
   backBtn.className = "es-back";
   backBtn.textContent = "← 科目一覧に戻る";
   backBtn.addEventListener("click", opts.onBack);
-  container.appendChild(backBtn);
+  formPane.appendChild(backBtn);
 
   const subjectTitle = document.createElement("div");
   subjectTitle.style.fontWeight = "bold";
   subjectTitle.style.marginBottom = "10px";
   subjectTitle.textContent = report.subject_name;
-  container.appendChild(subjectTitle);
+  formPane.appendChild(subjectTitle);
 
   const fields = (report.base_sheet_fields ?? [])
     .slice()
@@ -53,7 +97,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     const warn = document.createElement("div");
     warn.className = "es-warning";
     warn.textContent = guard.reason ?? "";
-    container.appendChild(warn);
+    formPane.appendChild(warn);
   }
 
   const backupKeyId = { studentCode: opts.sheet.studentCode, baseSheetId: opts.sheet.baseSheetId, times: opts.sheet.times };
@@ -68,11 +112,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       applyBackup(existingBackup);
       restoreBar.remove();
     });
-    container.appendChild(restoreBar);
+    formPane.appendChild(restoreBar);
   }
 
   const fieldsContainer = document.createElement("div");
-  container.appendChild(fieldsContainer);
+  formPane.appendChild(fieldsContainer);
 
   const handles: FieldRowHandle[] = [];
 
@@ -108,14 +152,23 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   }
 
   function renderFieldRows(): void {
+    for (const h of handles) h.destroy();
     fieldsContainer.innerHTML = "";
     handles.length = 0;
     for (const field of fields) {
       const handle = createFieldRow({
         field,
-        pageImage: pageImages[field.raw.page - 1] ?? pageImages[field.raw.page] ?? null,
+        pageImage: pageImages[pageArrayIndex(pageImages, field.raw.page)] ?? null,
         cutMargin,
         onChange: () => persistBackup(),
+        onShowPage: (page) => {
+          // いま見ている種別(問題/解答用紙)のまま、その設問のページへ送る
+          const src = viewer.currentSource();
+          const images = src === "question" ? questionImages : pageImages;
+          viewer.goTo(src, pageArrayIndex(images, page));
+          // スマホでは問題ペインに切り替えないと見えない
+          if (window.innerWidth < TWO_PANE_MIN_WIDTH) showPane("question");
+        },
       });
       fieldsContainer.appendChild(handle.element);
       handles.push(handle);
@@ -135,7 +188,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   statusEl.className = "es-save-status";
   saveBar.appendChild(saveBtn);
   saveBar.appendChild(statusEl);
-  container.appendChild(saveBar);
+  formPane.appendChild(saveBar);
 
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;

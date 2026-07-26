@@ -1,6 +1,11 @@
 // ユーザースクリプト版エントリ。ページ読み込み時に起動ボタンだけを常駐させ、
 // オーバーレイはボタンが押されるまで開かない(ブックマークレット版 main.ts は即起動)。
-import { createOverlay, type EasySmarkyController } from "./ui/overlay";
+import {
+  AUTOSTART_KEY,
+  AUTOSTART_TTL_MS,
+  createOverlay,
+  type EasySmarkyController,
+} from "./ui/overlay";
 
 declare global {
   interface Window {
@@ -9,6 +14,27 @@ declare global {
 }
 
 const LAUNCHER_ID = "easysmarky-launcher";
+
+function launch(): void {
+  window.__easysmarky = createOverlay({ canOpenInNewTab: true });
+  window.__easysmarky.start();
+}
+
+/**
+ * ヘッダーの「別タブで開く」から開かれたタブか。
+ * sessionStorage は window.open 先へ複製されない(Chrome/Safari)ため localStorage を使い、
+ * 放置されたフラグが後から誤発火しないよう発行時刻でTTLを見る。
+ */
+function consumeAutostartFlag(): boolean {
+  try {
+    const stamp = Number(localStorage.getItem(AUTOSTART_KEY) ?? 0);
+    if (!stamp || Date.now() - stamp > AUTOSTART_TTL_MS) return false;
+    localStorage.removeItem(AUTOSTART_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function addLauncher(): void {
   if (document.getElementById(LAUNCHER_ID)) return;
@@ -36,8 +62,7 @@ function addLauncher(): void {
   ].join(";");
   button.addEventListener("click", () => {
     if (!window.__easysmarky) {
-      window.__easysmarky = createOverlay();
-      window.__easysmarky.start();
+      launch();
       return;
     }
     window.__easysmarky.toggle();
@@ -46,3 +71,5 @@ function addLauncher(): void {
 }
 
 addLauncher();
+
+if (consumeAutostartFlag()) launch();
