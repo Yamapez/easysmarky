@@ -1,0 +1,81 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: ./node_modules/.bin/tsc --noEmit
+
+      - name: Decide whether to deploy
+        id: gate
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          PREVIOUS=$(git show HEAD^:package.json 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0, 'utf-8')).version" 2>/dev/null || echo "none")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$CURRENT" = "$PREVIOUS" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::package.json version is unchanged ($CURRENT). Skipping deploy."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Chrome
+        if: steps.gate.outputs.skip != 'true'
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Build & UI regression check
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: npm run verify
+
+      - name: Setup Pages
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        if: steps.gate.outputs.skip != 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4

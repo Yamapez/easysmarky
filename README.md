@@ -184,9 +184,9 @@ npm run dev     # watchモードでビルド(ブックマークレット版の�
 
 ### デプロイ(GitHub Pages)
 
-`gh-pages` ブランチのルートに `easysmarky.iife.js`・`easysmarky.user.js`・
-`index.html` を置く形でGitHub Pagesを公開しています( https://yamapez.github.io/easysmarky/ )。
-更新する場合は `npm run build` で `dist/` の両ファイルを再生成し、
-`gh-pages` ブランチの同名ファイルを差し替えてコミット・プッシュしてください
-(mainブランチのソースとは別管理です)。ブックマークレットのローダーは
+GitHub Pages(ソース: GitHub Actions)で公開しています( https://yamapez.github.io/easysmarky/ )。
+`package.json` の `version` を上げて push すると、`.github/workflows/deploy-pages.yml` が
+型チェック・`npm run verify`・`dist/` のビルド・Pagesへのデプロイまで自動で行います
+(バージョンを上げていないpushでは何もしません)。手動で反映したい場合はGitHub Actionsの
+`workflow_dispatch` から実行してください。ブックマークレットのローダーは
 `?v=<timestamp>` を自動付与するため、ブラウザキャッシュを気にせず更新を反映できます。

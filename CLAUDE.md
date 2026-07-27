@@ -31,9 +31,10 @@ UIは「1設問ずつ集中して入力する」方針で作られている(解�
 ## リリース・デプロイ
 
 - **リリース時は必ず `package.json` の `version` を上げる。** この値が userscript の `@version` に埋め込まれ(vite.config.ts)、Tampermonkey等の自動更新はこの比較で動く。
-- 配布は GitHub Pages: `gh-pages` ブランチのルートに `easysmarky.iife.js`・`easysmarky.user.js`・`index.html` を置く(mainのソースとは別管理)。`index.html` は gh-pages 側だけの手書きファイルで main に実体は無いので、デプロイ時に上書きしない。
-- **反映は `.github/workflows/deploy-gh-pages.yml` が自動で行う。** `package.json` を変更した push(または手動の `workflow_dispatch`)をトリガーに、型チェック→`npm run verify`→gh-pages側の `@version` と現在のバージョンを比較→違えば `easysmarky.iife.js`/`easysmarky.user.js` だけを差し替えてコミット・プッシュする(gh-pagesはCI内で `git worktree` を使い、mainの作業ツリーには持ち込まない)。バージョンが変わっていなければ何もせずスキップする。
-- 手動で反映したい場合のみ、`npm run build` 後に `git worktree add ../gh-pages-deploy origin/gh-pages` などで別ディレクトリにgh-pagesを出し、対象2ファイルを差し替えてコミット・プッシュする。
+- 配布は GitHub Pages(ソース: GitHub Actions)。`gh-pages` ブランチは使わない — `dist/`(`easysmarky.iife.js`・`easysmarky.user.js`・`index.html`)をビルド成果物としてそのままPagesにアップロードする。`index.html` は `public/index.html` が実体で、Viteのpublicディレクトリとして自動的に `dist/` にコピーされる。
+- **反映は `.github/workflows/deploy-pages.yml` が自動で行う。** `package.json` を変更した push(または手動の `workflow_dispatch`)をトリガーに、型チェック→`npm run verify`→`package.json` の version が直前のコミットから変わっているか確認→変わっていれば `actions/upload-pages-artifact` / `actions/deploy-pages` で `dist/` を配信する。バージョンが変わっていなければ(`workflow_dispatch` 以外は)何もせずスキップする。
+- リポジトリ設定は Settings → Pages → Source を「GitHub Actions」にしておくこと(「Deploy from a branch」ではない)。
+- 旧 `gh-pages` ブランチは移行前の名残で、もう配信には使われていない。
 
 ## ビルド構成
 
