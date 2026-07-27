@@ -21,6 +21,9 @@ npm run verify                   # ビルド + ヘッドレスChromiumでのUI�
 `src/ui/` や `src/save/save.ts` を触ったら必ず流すこと。前提と落とし穴は
 `tools/verify/README.md` に書いてある(特に「スマホのプレビュー描画は ResizeObserver
 だけが支えている」と「`--virtual-time-budget` は使わない」)。
+UIは「1設問ずつ集中して入力する」方針で作られている(解答用紙の解答欄をタップして入力に入り、
+下部の設問ストリップで移動し、「次の未入力へ」で未入力を追う)。解答欄の枠は、rim の座標系が
+確実な解答用紙ページにだけ重ねること(問題ページ側で一致するかは実機で未確認)。
 
 これで確認できないもの(問題文がどちらのタブに載るか、iOS Safari の `100dvh`、
 実サーバへの保存)は実機での確認が要る。
@@ -45,12 +48,12 @@ userscript ビルドでは vite.config.ts 内のカスタムプラグインが m
 
 データの流れ: `api/` でSmarky APIから取得 → `model/` で編集用構造体に変換 → `ui/` のフォームで編集 → `render/` でテキストをcanvasにPNG描画 → `save/` でZIP化してSmarkyへPOST → 保存後に再取得して反映を照合。
 
-- `src/ui/` — Shadow DOM 上のオーバーレイ全体。`overlay.ts`(ホスト生成・画面遷移)→ `sheetPicker.ts`(科目・回の一覧)→ `formView.ts` + `fieldRow.ts`(設問ごとの入力フォーム)。CSSは `styles.ts` に文字列で集約
+- `src/ui/` — Shadow DOM 上のオーバーレイ全体。`overlay.ts`(ホスト生成・画面遷移・ヘッダのスロット)→ `sheetPicker.ts`(科目・回の一覧)→ `formView.ts`(1設問集中レイアウトの司令塔)。`formView.ts` が使う部品は `pageViewer.ts`(ページ画像 + 解答欄の枠オーバーレイ)・`fieldEditor.ts`(1設問ぶんの入力欄とプレビュー)・`questionStrip.ts`(下部の設問チップ)。CSSは `styles.ts` に文字列で集約
 - `src/api/` — `fetch`(credentials: include)による薄いクライアント。型は `types.ts`
 - `src/model/` — `field.ts`(編集可否の判定を含む `EditableField`)、`toParam.ts`(保存用パラメータ+ZIPエントリの構築)
 - `src/render/` — canvasでのテキスト計測・描画(横書き/縦書き)
 - `src/save/` — `buildZip.ts`(fflateで無圧縮ZIP生成)、`save.ts`(保存ガード→ZIP→POST→再取得照合のオーケストレーション)
-- `src/storage/` — localStorageへの入力内容自動バックアップ(キー: `easysmarky:{studentCode}:{baseSheetId}:{times}`)
+- `src/storage/` — localStorageへの入力内容自動バックアップ(キー: `easysmarky:{studentCode}:{baseSheetId}:{times}`、値は `{v:2, savedAt, fields}`。v0.5.0以前のフラットな形式も読める)と、一覧に出す進捗の要約(キー: `easysmarky:summary:{studentCode}`)。一覧APIは設問を返さないため、進捗と「手書きあり・保存不可」は一度開いた回の要約だけから出す
 
 ### Smarky公式 app.js との対応
 

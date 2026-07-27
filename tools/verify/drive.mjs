@@ -119,7 +119,7 @@ async function openHarness(send, url) {
     await sleep(150);
     const ok = await evalJs(
       send,
-      `!!document.getElementById("easysmarky-host")?.shadowRoot?.querySelector(".es-list-item, .es-form-layout")`,
+      `!!document.getElementById("easysmarky-host")?.shadowRoot?.querySelector(".es-list-item, .es-form")`,
       false,
     );
     if (ok) return;
@@ -141,32 +141,68 @@ function check(name, ok, detail) {
 function assertAll(label, r) {
   const s = r.steps;
 
+  // --- 1設問集中レイアウトの骨格 ---
+  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 3, s.initial.stripChips);
+  check(`${label}: 最初の設問が開いている`, s.initial.editorName.includes("問1"), s.initial.editorName);
+  check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 1/3", s.initial.progress);
+
+  // --- 解答欄オーバーレイ(rim座標は解答用紙のものなので問題ページには出さない) ---
+  check(`${label}: 問題ページには解答欄の枠を出さない`, s.initial.rimCount === 0, s.initial.rimCount);
+  check(`${label}: 解答用紙に設問数ぶんの枠と凡例が出る`,
+    s.answerSheet.rimCount === 3 && s.answerSheet.legendDisplay === "flex",
+    { rims: s.answerSheet.rimCount, legend: s.answerSheet.legendDisplay });
+  check(`${label}: 枠が用紙サイズに対する百分率で置かれる`,
+    s.answerSheet.firstRimStyle?.left === "4%" && s.answerSheet.firstRimStyle?.width === "92%",
+    s.answerSheet.firstRimStyle);
+  check(`${label}: 入力済み・入力中の枠が塗り分けられる`,
+    s.answerSheet.activeRims === 1 && s.answerSheet.filledRims === 0,
+    { active: s.answerSheet.activeRims, filled: s.answerSheet.filledRims });
+
+  // --- 解答欄タップ → 入力 ---
+  check(`${label}: 解答欄をタップするとその設問が開く`,
+    s.afterRimTap.editorName.includes("問1"), s.afterRimTap);
   if (s.initial.twoPaneMediaQuery) {
-    check(`${label}: 2カラムでタブが隠れている`, s.initial.tabsDisplay === "none", s.initial.tabsDisplay);
-    check(`${label}: 問題・フォームの両ペインが表示されている`,
+    check(`${label}: 2カラムで問題と入力の両ペインが出る`,
       s.initial.questionPaneDisplay !== "none" && s.initial.formPaneDisplay !== "none",
       `${s.initial.questionPaneDisplay}/${s.initial.formPaneDisplay}`);
     check(`${label}: 初期表示で既存下書きのプレビューが描画される`,
-      s.initial.field1.display === "block", s.initial.field1);
+      s.initial.field1.display === "block" && parseFloat(s.initial.field1.width) > 0, s.initial.field1);
   } else {
-    check(`${label}: タブが表示され「問題」から始まる`,
-      s.initial.tabsDisplay === "flex" && s.initial.dataPane === "question",
-      `${s.initial.tabsDisplay}/${s.initial.dataPane}`);
-    // 最重要: フォームが display:none で始まるため、既存下書きのプレビューを描くのは
-    // 「解答」タブを押したときの ResizeObserver 発火だけになる。
+    check(`${label}: 問題ページから始まり入力ペインは畳まれている`,
+      s.initial.dataMode === "view" && s.initial.formPaneDisplay === "none",
+      `${s.initial.dataMode}/${s.initial.formPaneDisplay}`);
+    check(`${label}: 解答欄をタップすると入力モードに入る`,
+      s.afterRimTap.dataMode === "edit", s.afterRimTap.dataMode);
+    // 最重要: 入力ペインが display:none で始まるため、既存下書きのプレビューを描くのは
+    // 編集モードに入って ResizeObserver が発火する経路だけになる。
     // ここが落ちると、下書きを再開したスマホユーザーはプレビューが永久に空になる。
-    check(`${label}: 「解答」タブでプレビューが描画される(ResizeObserver経由)`,
-      s.afterFormTab.field1.display === "block" && parseFloat(s.afterFormTab.field1.width) > 0,
-      s.afterFormTab);
+    check(`${label}: 入力モードでプレビューが描画される(ResizeObserver経由)`,
+      s.afterRimTap.field1.display === "block" && parseFloat(s.afterRimTap.field1.width) > 0,
+      s.afterRimTap);
   }
 
+  // --- 設問の移動 ---
+  check(`${label}: ストリップで設問を移動できる`,
+    s.stripNav.activeChipIndex === 2 && s.stripNav.editorName.includes("ウ"), s.stripNav);
+  check(`${label}: 「次の未入力へ」で未入力の設問に移る`,
+    s.nextEmpty.textareaValue === "", s.nextEmpty);
+
+  // --- プレビュー描画 ---
   check(`${label}: 幅変更でスケールが再計算される`, s.resize.rescaledCorrectly === true,
     { png: [s.resize.pngWidthBefore, s.resize.pngWidthAfterShrink, s.resize.pngWidthAfterRestore] });
   check(`${label}: ResizeObserverが無限ループしない`,
     s.resize.mutationCallbacksAt400ms === s.resize.mutationCallbacksAt1300ms,
     `${s.resize.mutationCallbacksAt400ms} -> ${s.resize.mutationCallbacksAt1300ms}`);
   check(`${label}: 入力したテキストのプレビューが出る`,
-    s.typed.field2.display === "block" && parseFloat(s.typed.field2.width) > 0, s.typed.field2);
+    s.typed.field.display === "block" && parseFloat(s.typed.field.width) > 0, s.typed.field);
+  check(`${label}: 入力すると進捗とストリップが更新される`,
+    s.typed.progress === "入力済み 2/3" && s.typed.filledDots === 2,
+    { progress: s.typed.progress, dots: s.typed.filledDots });
+  check(`${label}: 文字数と収まり判定が出る`, /字/.test(s.typed.fit), s.typed.fit);
+  check(`${label}: Ctrl+↵ で次の設問に移る`,
+    s.shortcut.after !== s.shortcut.before && s.shortcut.after.length > 0, s.shortcut);
+
+  // --- 保存 ---
   check(`${label}: 下書き保存が再取得照合まで通る`,
     s.save.postCount === 1 && s.save.status.includes("反映を確認"), s.save.status);
   check(`${label}: 背景ページのスクロールがロックされる`,
@@ -195,15 +231,17 @@ try {
   // 目視確認用のスクリーンショット
   await setViewport(send, 1400, 900);
   await openHarness(send, URL_HARNESS);
-  await evalJs(send, `window.__esView("question")`);
+  await evalJs(send, `window.__esView("list")`);
+  await screenshot(send, "desktop-list.png");
+  await evalJs(send, `window.__esView("view")`);
   await screenshot(send, "desktop.png");
 
   await setViewport(send, 430, 900);
   await openHarness(send, URL_HARNESS);
-  await evalJs(send, `window.__esView("question")`);
-  await screenshot(send, "mobile-question.png");
-  await evalJs(send, `window.__esView("form")`);
-  await screenshot(send, "mobile-form.png");
+  await evalJs(send, `window.__esView("view")`);
+  await screenshot(send, "mobile-view.png");
+  await evalJs(send, `window.__esView("edit")`);
+  await screenshot(send, "mobile-edit.png");
 } catch (e) {
   check("実行が最後まで完了する", false, String(e && e.stack || e));
 } finally {

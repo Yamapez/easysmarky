@@ -85,7 +85,7 @@ function field(id, part3, rim, answerTexts) {
 
 // 設問1は「下書きを再開した」状態を再現するため、既存の answer_texts を持たせる。
 // これが無いと updatePreview() の空テキスト早期returnに入り、
-// スマホ初期表示(フォームが display:none)からの復帰経路を検証できない。
+// スマホ初期表示(入力ペインが display:none)からの復帰経路を検証できない。
 const EXISTING_TEXT = {
   id: 11, base_sheet_field_id: 1, idx: 0,
   text: "既存の下書きテキスト", color: "#000000",
@@ -146,12 +146,19 @@ window.fetch = async (input, init) => {
   return realFetch(input, init);
 };
 
+// 前回の実行が残した下書き・進捗キャッシュを消してから始める
+try {
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith("easysmarky:")) localStorage.removeItem(key);
+  }
+} catch (e) { /* localStorage が使えない環境は無視 */ }
+
 // ============================================================
 // 自動駆動 (?auto=assert | ?auto=view)
 // ============================================================
 const params = new URLSearchParams(location.search);
 const AUTO = params.get("auto");
-const PANE = params.get("pane") || "question";
+const MODE = params.get("mode") || "view";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, label, timeout = 8000) {
@@ -170,13 +177,16 @@ const shadow = () => {
 };
 const q = (sel) => { const s = shadow(); return s && s.querySelector(sel); };
 const qa = (sel) => { const s = shadow(); return s ? Array.from(s.querySelectorAll(sel)) : []; };
+/** 同じクラスの要素がPC用/スマホ用に複数あるので、いま画面に出ている方を選ぶ */
+const visible = (sel) => qa(sel).find((el) => el.getBoundingClientRect().width > 0) || null;
 
-function overlayState(i) {
-  const wraps = qa(".es-preview-wrap");
-  const wrap = wraps[i];
+/** 表示中の1設問エディタのプレビュー状態 */
+function overlayState() {
+  const wrap = q(".es-preview-wrap");
   if (!wrap) return null;
   const canvas = wrap.querySelector("canvas.es-crop");
   const img = wrap.querySelector(".es-preview-overlay");
+  if (!canvas || !img) return null;
   const renderedWidth = canvas.getBoundingClientRect().width;
   return {
     renderedWidth: Math.round(renderedWidth * 100) / 100,
@@ -189,70 +199,107 @@ function overlayState(i) {
   };
 }
 
+function viewerTab(label) {
+  return qa(".es-viewer-tabs button").find((b) => b.textContent === label) || null;
+}
+
+async function openSheet() {
+  await waitFor(() => q(".es-list-item"), "sheet list");
+  q(".es-list-item").click();
+  await waitFor(() => q(".es-form"), "form");
+  await waitFor(() => q(".es-field-editor .es-preview-wrap"), "field editor");
+  await sleep(600); // 画像デコード + 初回プレビュー描画待ち
+}
+
 async function runAssertions() {
   const results = { mode: "assert", viewport: { w: innerWidth, h: innerHeight }, steps: {} };
   const t0 = Date.now();
 
-  await waitFor(() => q(".es-list-item"), "sheet list");
-  q(".es-list-item").click();
-  await waitFor(() => q(".es-form-layout"), "form layout");
-  await waitFor(() => qa(".es-preview-wrap").length >= 3, "field rows");
-  await sleep(600); // 画像デコード + 初回プレビュー描画待ち
+  await openSheet();
 
-  // 独立した ResizeObserver を同じ canvas に張り、発火の有無・タイミングを記録する。
-  // 「プレビューが描かれない」原因が RO 未発火なのか updatePreview の早期returnなのかを切り分ける。
+  const form = q(".es-form");
+  const isTwoPane = matchMedia("(min-width: 900px)").matches;
+
+  // 入力ペインの表示/非表示の切り替わりを記録する。ここが 0 → N に変わったときに
+  // fieldEditor の ResizeObserver が発火し、プレビューが描かれる。
   const probeLog = [];
-  const probeCanvas = qa(".es-preview-wrap")[0].querySelector("canvas.es-crop");
   const probeRO = new ResizeObserver((entries) => {
-    for (const e of entries) {
-      probeLog.push({ at: Date.now() - t0, w: Math.round(e.contentRect.width * 100) / 100 });
-    }
+    for (const e of entries) probeLog.push({ at: Date.now() - t0, w: Math.round(e.contentRect.width * 100) / 100 });
   });
-  probeRO.observe(probeCanvas);
+  probeRO.observe(q(".es-pane-form"));
   await sleep(300);
 
-  const layout = q(".es-form-layout");
-  const isTwoPane = matchMedia("(min-width: 900px)").matches;
   results.steps.initial = {
-    dataPane: layout.dataset.pane,
+    dataMode: form.dataset.mode,
     twoPaneMediaQuery: isTwoPane,
-    tabsDisplay: getComputedStyle(q(".es-pane-tabs")).display,
     questionPaneDisplay: getComputedStyle(q(".es-pane-question")).display,
     formPaneDisplay: getComputedStyle(q(".es-pane-form")).display,
-    // 既存下書きを持つ設問1のプレビュー状態
-    field1: overlayState(0),
+    stripChips: qa(".es-strip-chip").length,
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    progress: (q(".es-progress-count").textContent || "").trim(),
+    // 初期表示は「問題」ページなので解答欄の枠は出ない(rim座標は解答用紙のもの)
+    rimCount: qa(".es-rim").length,
+    field1: overlayState(),
   };
 
-  // --- 最重要: スマホ初期表示(フォーム非表示)から「解答」タブを押したときに描画されるか ---
-  const probeBeforeTab = probeLog.length;
-  const formTabBtn = qa(".es-pane-tabs button")[1];
-  formTabBtn.click();
+  // --- 解答用紙タブ: 解答欄の枠と凡例が出るか ---
+  viewerTab("解答用紙").click();
+  await sleep(400);
+  results.steps.answerSheet = {
+    rimCount: qa(".es-rim").length,
+    filledRims: qa(".es-rim.filled").length,
+    activeRims: qa(".es-rim.active").length,
+    legendDisplay: getComputedStyle(q(".es-viewer-legend")).display,
+    firstRimStyle: (() => {
+      const r = qa(".es-rim")[0];
+      return r ? { left: r.style.left, top: r.style.top, width: r.style.width, height: r.style.height } : null;
+    })(),
+  };
+
+  // --- 最重要: 解答欄をタップ → 入力に入ったときにプレビューが描かれるか ---
+  // スマホは入力ペインが display:none で始まるため、描画経路は
+  // 「編集モードに入って ResizeObserver が発火する」ときだけになる。
+  const probeBeforeTap = probeLog.length;
+  qa(".es-rim")[0].click();
   await sleep(1200);
-  results.steps.afterFormTab = {
-    dataPane: layout.dataset.pane,
-    field1: overlayState(0),
-    roFiredOnTabSwitch: probeLog.length - probeBeforeTab,
-    roLog: probeLog.slice(),
+  results.steps.afterRimTap = {
+    dataMode: form.dataset.mode,
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    field1: overlayState(),
+    paneResizesOnTap: probeLog.length - probeBeforeTap,
+    probeLog: probeLog.slice(),
+  };
+
+  // --- 設問ストリップで移動できるか ---
+  qa(".es-strip-chip")[2].click();
+  await sleep(500);
+  results.steps.stripNav = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    activeChipIndex: qa(".es-strip-chip").findIndex((c) => c.classList.contains("active")),
+    dataMode: form.dataset.mode,
   };
 
   // --- ResizeObserver: 幅を変えたら再計算されるか / ping-pong しないか ---
+  // (既存テキストのある設問1に戻してから測る)
+  qa(".es-strip-chip")[0].click();
+  await sleep(700);
   const formPane = q(".es-pane-form");
-  const img1 = qa(".es-preview-wrap")[0].querySelector(".es-preview-overlay");
+  const img1 = q(".es-preview-overlay");
   let mutations = 0;
   const mo = new MutationObserver(() => { mutations++; });
   mo.observe(img1, { attributes: true, attributeFilter: ["style", "src"] });
 
-  const before = overlayState(0);
+  const before = overlayState();
   formPane.style.maxWidth = "320px";
   await sleep(400);
   const mutAt400 = mutations;
-  const afterShrink = overlayState(0);
+  const afterShrink = overlayState();
   await sleep(900);
   const mutAt1300 = mutations;
 
   formPane.style.maxWidth = "";
   await sleep(900);
-  const afterRestore = overlayState(0);
+  const afterRestore = overlayState();
   mo.disconnect();
   probeRO.disconnect();
 
@@ -272,18 +319,43 @@ async function runAssertions() {
         : null,
     mutationCallbacksAt400ms: mutAt400,
     mutationCallbacksAt1300ms: mutAt1300,
-    roLogFull: probeLog.slice(),
   };
 
-  // --- 入力 → プレビュー ---
-  const textareas = qa("textarea.es-textarea");
-  textareas[1].value = "都市部へ人口が流出し、地域の担い手が不足した。";
-  textareas[1].dispatchEvent(new Event("input", { bubbles: true }));
+  // --- 「次の未入力へ」で未入力の設問に移るか ---
+  visible(".es-next-btn").click();
   await sleep(500);
-  results.steps.typed = { field2: overlayState(1) };
+  results.steps.nextEmpty = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    dataMode: form.dataset.mode,
+    textareaValue: q("textarea.es-textarea").value,
+  };
+
+  // --- 入力 → プレビュー・進捗・ストリップの更新 ---
+  const ta = q("textarea.es-textarea");
+  ta.value = "都市部へ人口が流出し、地域の担い手が不足した。";
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  await sleep(600);
+  results.steps.typed = {
+    field: overlayState(),
+    progress: (q(".es-progress-count").textContent || "").trim(),
+    filledDots: qa(".es-strip-dot.filled").length,
+    fit: (q(".es-fit").textContent || "").trim(),
+  };
+
+  // --- キーボードショートカット(Ctrl+↵ で次の設問) ---
+  // Shadow DOM の外(window)で受けているので composed: true が要る
+  const beforeShortcut = (q(".es-editor-name").textContent || "").trim();
+  q("textarea.es-textarea").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
+  );
+  await sleep(400);
+  results.steps.shortcut = {
+    before: beforeShortcut,
+    after: (q(".es-editor-name").textContent || "").trim(),
+  };
 
   // --- 下書き保存の往復 ---
-  const saveBtn = q(".es-save-btn");
+  const saveBtn = visible(".es-save-btn");
   results.steps.save = { disabledBeforeClick: saveBtn.disabled };
   saveBtn.click();
   await waitFor(() => {
@@ -306,38 +378,47 @@ async function runAssertions() {
   return results;
 }
 
-async function runView(pane) {
-  const want = pane || PANE;
-  if (!q(".es-form-layout")) {
+async function runView(mode) {
+  const want = mode || MODE;
+  if (want === "list") {
     await waitFor(() => q(".es-list-item"), "sheet list");
-    q(".es-list-item").click();
-    await waitFor(() => q(".es-form-layout"), "form layout");
-    await waitFor(() => qa(".es-preview-wrap").length >= 3, "field rows");
-    // 下書きが入っている状態で見た目を確認したいので、空の設問にも入力しておく
-    const textareas = qa("textarea.es-textarea");
-    if (textareas[1] && !textareas[1].value) {
-      textareas[1].value = "都市部へ人口が流出し、地域の担い手が不足した。";
-      textareas[1].dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    await sleep(900);
+    await sleep(300);
+    return { mode: "view", view: want };
   }
-  const tabs = qa(".es-pane-tabs button");
-  if (want === "form") tabs[1].click();
-  else tabs[0].click();
+  if (!q(".es-form")) {
+    await openSheet();
+    // 下書きが入っている状態で見た目を確認したいので、空の設問にも入力しておく
+    visible(".es-next-btn").click();
+    await sleep(400);
+    const ta = q("textarea.es-textarea");
+    if (ta && !ta.value) {
+      ta.value = "都市部へ人口が流出し、地域の担い手が不足した。";
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await sleep(600);
+    viewerTab("解答用紙").click();
+    await sleep(500);
+  }
+  if (want === "edit") {
+    qa(".es-rim")[0].click();
+  } else {
+    const back = visible(".es-editor-back");
+    if (back) back.click();
+  }
   await sleep(900);
-  return { mode: "view", pane: want, viewport: { w: innerWidth, h: innerHeight } };
+  return { mode: "view", view: want, dataMode: q(".es-form").dataset.mode };
 }
 
 // CDPドライバから呼ぶ用(実時間で動く。--virtual-time-budget では
 // ResizeObserver の配信タイミングが実機と変わるため、こちらを本命にする)
 window.__esAssert = () => runAssertions();
-window.__esView = (pane) => runView(pane);
+window.__esView = (mode) => runView(mode);
 
 if (AUTO) {
   window.addEventListener("load", async () => {
     const out = document.getElementById("es-results");
     try {
-      const res = AUTO === "view" ? await runView(PANE) : await runAssertions();
+      const res = AUTO === "view" ? await runView(MODE) : await runAssertions();
       out.textContent = "RESULTS " + JSON.stringify(res, null, 1);
     } catch (e) {
       out.textContent = "RESULTS " + JSON.stringify({ fatal: String(e && e.stack || e) }, null, 1);

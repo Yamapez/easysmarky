@@ -7,12 +7,12 @@ export const OVERLAY_STYLES = `
   height: 100dvh;  /* iOS Safari のツールバー分を除いた実際の表示高さ */
   z-index: 2147483000;
   background: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", sans-serif;
+  color: #1d2b33;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
   overflow: hidden; /* スクロールは内側のペインが持つ */
 }
 .es-panel {
   background: #fff;
-  color: #222;
   width: 100%;
   height: 100%;
   display: flex;
@@ -37,6 +37,8 @@ export const OVERLAY_STYLES = `
   margin: 0 auto;
   padding: 12px 14px 40px;
 }
+
+/* ===== ヘッダ ===== */
 .es-header {
   flex: 0 0 auto;
   display: flex;
@@ -47,9 +49,39 @@ export const OVERLAY_STYLES = `
   border-bottom: 2px solid #2196c9;
   background: #fff;
 }
+.es-header-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.es-header-back {
+  border: none;
+  background: transparent;
+  color: #2196c9;
+  font-size: 14px;
+  min-height: 40px;
+  padding: 0;
+  font-family: inherit;
+  white-space: nowrap;
+}
 .es-title {
   font-size: 16px;
   font-weight: bold;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.es-header-sub {
+  font-size: 12px;
+  color: #8b959b;
+  white-space: nowrap;
+}
+.es-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
 }
 .es-header-actions {
   display: flex;
@@ -64,29 +96,113 @@ export const OVERLAY_STYLES = `
   padding: 8px 12px;
   font-size: 14px;
   min-height: 40px;
+  font-family: inherit;
+  white-space: nowrap;
 }
 .es-close {
   border: none;
   background: #eee;
+  color: #1d2b33;
   border-radius: 6px;
   padding: 8px 12px;
   font-size: 14px;
   min-height: 40px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+/* ===== 進捗表示(ヘッダ内) ===== */
+.es-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.es-progress-count {
+  font-size: 12px;
+  color: #5b6770;
+  white-space: nowrap;
+}
+.es-progress-bar {
+  display: block;
+  flex: 0 0 auto;
+  width: 120px;
+  height: 8px;
+  border-radius: 4px;
+  background: #e3e8eb;
+  overflow: hidden;
+}
+.es-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #2196c9;
+}
+.es-progress-fill.done { background: #4caf50; }
+.es-autosave {
+  font-size: 12px;
+  color: #7a848a;
+  white-space: nowrap;
+}
+
+/* ===== 一覧 ===== */
+.es-list-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: #5b6770;
+}
+.es-list-note .es-list-note-sub {
+  margin-left: auto;
+  font-size: 12px;
+  color: #8b959b;
+}
+.es-list-heading {
+  font-weight: bold;
+  font-size: 14px;
+  margin: 14px 0 6px;
 }
 .es-list-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   text-align: left;
-  padding: 12px 10px;
+  padding: 12px;
   margin-bottom: 6px;
   border: 1px solid #ddd;
   border-radius: 8px;
   background: #fafafa;
+  color: #1d2b33;
+  font-family: inherit;
   font-size: 14px;
   min-height: 44px;
 }
+.es-list-item.current {
+  border-color: #2196c9;
+  background: #eaf6fb;
+}
 .es-list-item:active { background: #eef7fb; }
+.es-list-main { flex: 1 1 auto; min-width: 0; }
+.es-list-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-weight: bold;
+}
 .es-list-item .es-sub { color: #666; font-size: 12px; margin-top: 2px; }
+.es-list-progress {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #5b6770;
+  white-space: nowrap;
+}
+.es-list-progress .es-progress-bar { width: 96px; }
 .es-badge {
   display: inline-block;
   font-size: 11px;
@@ -94,10 +210,13 @@ export const OVERLAY_STYLES = `
   border-radius: 10px;
   background: #2196c9;
   color: #fff;
-  margin-left: 6px;
+  white-space: nowrap;
 }
 .es-badge.done { background: #4caf50; }
 .es-badge.locked { background: #999; }
+.es-badge.idle { background: #eef1f3; color: #6b757b; }
+
+/* ===== 共通の注意書き ===== */
 .es-warning {
   background: #fff3e0;
   border: 1px solid #ffb74d;
@@ -108,6 +227,23 @@ export const OVERLAY_STYLES = `
   margin-bottom: 12px;
   line-height: 1.5;
 }
+.es-warning-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.es-warning-actions button {
+  flex: 1;
+  padding: 10px;
+  font-size: 13px;
+  border: 1px solid #7a4a00;
+  border-radius: 6px;
+  background: #fff;
+  color: #7a4a00;
+  min-height: 40px;
+  font-family: inherit;
+}
+.es-warning-actions button.secondary { border-color: #d8c3a2; }
 .es-error {
   background: #fdecea;
   border: 1px solid #f5989d;
@@ -118,30 +254,135 @@ export const OVERLAY_STYLES = `
   margin-bottom: 12px;
   white-space: pre-wrap;
 }
-.es-field {
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 10px;
-  margin-bottom: 14px;
+.es-loading {
+  padding: 40px 10px;
+  text-align: center;
+  color: #666;
 }
-.es-field-label {
-  font-size: 13px;
-  font-weight: bold;
-  margin-bottom: 6px;
+
+/* ===== フォーム全体(1設問集中レイアウト) ===== */
+.es-form {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
-  justify-content: space-between;
-  gap: 6px;
+  flex-direction: column;
 }
-.es-field-locked {
+/* シート全体に関わる注意書き(保存ブロック・下書き復元・保存結果)。
+   スマホでは問題ページ表示中でも見えるように、ペインの外に置く */
+.es-notices {
+  flex: 0 0 auto;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 10px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.es-notices:empty { display: none; }
+.es-notices > * { margin-bottom: 0; }
+.es-work {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.es-pane-question {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.es-pane-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+/* スマホ: 問題ビューアと入力を行き来する。PCではメディアクエリで両方出す */
+.es-form[data-mode="view"] .es-pane-form { display: none; }
+.es-form[data-mode="edit"] .es-pane-question,
+.es-form[data-mode="edit"] .es-strip,
+.es-form[data-mode="edit"] .es-mobile-bar { display: none; }
+
+/* ===== 設問ヘッダ(エディタペイン上部) ===== */
+.es-editor-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e9eb;
+}
+.es-editor-back {
+  border: none;
+  background: transparent;
+  color: #2196c9;
+  font-size: 14px;
+  min-height: 40px;
+  padding: 0;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.es-editor-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+}
+.es-editor-name {
+  font-size: 16px;
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.es-editor-meta {
   font-size: 12px;
-  color: #888;
-  padding: 8px 0;
+  color: #8b959b;
+  white-space: nowrap;
+}
+.es-editor-nav {
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  border-radius: 6px;
+  min-width: 44px;
+  min-height: 40px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.es-editor-nav.primary {
+  border-color: #2196c9;
+  color: #2196c9;
+}
+.es-editor-nav:disabled { color: #bbb; background: #f5f5f5; }
+.es-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+/* ===== 1設問エディタ ===== */
+.es-preview-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #7a848a;
+}
+.es-preview-head .es-preview-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: #98a3aa;
 }
 .es-preview-wrap {
   position: relative;
   display: inline-block;
   max-width: 100%;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
   border: 1px solid #ccc;
   background: #f5f5f5;
 }
@@ -155,46 +396,127 @@ export const OVERLAY_STYLES = `
   pointer-events: none;
   image-rendering: pixelated;
 }
+.es-editor-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.es-field-name {
+  font-size: 15px;
+  font-weight: bold;
+}
 .es-direction-toggle {
   display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.es-direction-toggle button {
-  flex: 1;
-  padding: 8px;
-  font-size: 13px;
   border: 1px solid #bbb;
   border-radius: 6px;
-  background: #fff;
-  min-height: 40px;
+  overflow: hidden;
 }
+.es-direction-toggle button {
+  border: none;
+  background: #fff;
+  color: #555;
+  font-size: 13px;
+  padding: 8px 16px;
+  min-height: 40px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.es-direction-toggle button + button { border-left: 1px solid #bbb; }
 .es-direction-toggle button.active {
   background: #2196c9;
   color: #fff;
-  border-color: #2196c9;
 }
+.es-fit {
+  margin-left: auto;
+  font-size: 13px;
+  color: #2e7d32;
+  white-space: nowrap;
+}
+.es-fit.over { color: #a0522d; }
 .es-textarea {
   width: 100%;
-  min-height: 80px;
+  min-height: 150px;
   font-size: 16px; /* iOS Safariでズームさせないため16px以上 */
-  padding: 8px;
+  padding: 10px;
   border: 1px solid #bbb;
   border-radius: 6px;
   resize: vertical;
   font-family: inherit;
+  line-height: 1.7;
+  color: inherit;
 }
+.es-textarea:focus {
+  outline: none;
+  border-color: #2196c9;
+  box-shadow: 0 0 0 3px rgba(33, 150, 201, .24);
+}
+.es-key-hints {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #8b959b;
+}
+.es-key-hints span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.es-key-hints kbd {
+  font-family: ui-monospace, Menlo, monospace;
+  border: 1px solid #d5dbdf;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #fafbfc;
+}
+.es-field-locked {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px;
+}
+.es-field-locked .es-field-locked-name {
+  font-size: 13px;
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+.es-field-locked .es-field-locked-note {
+  font-size: 12px;
+  color: #888;
+  line-height: 1.6;
+}
+.es-field-pagelink {
+  border: none;
+  background: transparent;
+  color: #2196c9;
+  font-size: 13px;
+  padding: 4px 0;
+  min-height: 32px;
+  font-family: inherit;
+}
+
+/* ===== 保存バー ===== */
 .es-savebar {
-  position: sticky;
-  bottom: 0;
+  flex: 0 0 auto;
   background: #fff;
   border-top: 1px solid #ddd;
-  /* スクロールコンテナ(.es-pane-form)の左右パディング分を打ち消して端まで背景を敷く */
-  margin: 8px -12px 0;
-  padding: 10px 12px 4px;
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.es-savebar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .es-save-btn {
-  width: 100%;
+  flex: 1 1 auto;
   padding: 14px;
   font-size: 16px;
   font-weight: bold;
@@ -203,72 +525,124 @@ export const OVERLAY_STYLES = `
   background: #2196c9;
   color: #fff;
   min-height: 48px;
+  font-family: inherit;
+  white-space: nowrap;
 }
-.es-save-btn:disabled {
-  background: #aac7d3;
+.es-save-btn:disabled { background: #aac7d3; }
+.es-next-btn {
+  flex: 0 0 auto;
+  padding: 14px 16px;
+  font-size: 14px;
+  border: 1px solid #2196c9;
+  border-radius: 8px;
+  background: #fff;
+  color: #2196c9;
+  min-height: 48px;
+  font-family: inherit;
+  white-space: nowrap;
 }
+.es-next-btn:disabled { border-color: #cfd6da; color: #b9c2c7; }
 .es-save-status {
   font-size: 13px;
-  margin-top: 6px;
   text-align: center;
+  color: #7a848a;
 }
-.es-loading {
-  padding: 40px 10px;
-  text-align: center;
-  color: #666;
+.es-save-actions {
+  display: flex;
+  gap: 8px;
 }
-.es-back {
-  border: none;
-  background: transparent;
-  color: #2196c9;
-  font-size: 14px;
-  padding: 8px 0;
+.es-save-actions button {
+  flex: 1;
+  padding: 10px;
+  font-size: 13px;
+  border: 1px solid #a02622;
+  border-radius: 6px;
+  background: #fff;
+  color: #a02622;
   min-height: 40px;
+  font-family: inherit;
+}
+.es-save-actions button.secondary { border-color: #ccc; color: #333; }
+.es-save-note {
+  font-size: 12px;
+  text-align: center;
+  color: #7a848a;
 }
 
-/* ===== 問題ビューアと入力フォームの2ペイン ===== */
-.es-form-layout {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.es-pane-tabs {
+/* ===== スマホの下部バー(問題ページ表示中) ===== */
+.es-mobile-bar {
   flex: 0 0 auto;
+  background: #fff;
+  border-top: 1px solid #ddd;
+  box-shadow: 0 -4px 14px rgba(20, 40, 55, .10);
+  padding: 10px 12px 12px;
   display: flex;
-  border-bottom: 1px solid #ddd;
+  align-items: center;
+  gap: 10px;
 }
-.es-pane-tabs button {
-  flex: 1 1 50%;
-  border: none;
-  border-bottom: 3px solid transparent;
-  background: #f5f5f5;
-  color: #555;
+.es-mobile-bar-info { flex: 1 1 auto; min-width: 0; }
+.es-mobile-bar-title { font-size: 13px; font-weight: bold; white-space: nowrap; }
+.es-mobile-bar-sub { font-size: 11px; color: #8b959b; white-space: nowrap; }
+.es-mobile-bar .es-save-btn,
+.es-mobile-bar .es-next-btn {
+  flex: 0 0 auto;
+  padding: 12px 14px;
   font-size: 14px;
   min-height: 44px;
 }
-.es-pane-tabs button.active {
-  background: #fff;
-  color: #2196c9;
-  font-weight: bold;
-  border-bottom-color: #2196c9;
-}
-.es-pane-question {
-  flex: 1 1 auto;
-  min-height: 0;
+
+/* ===== 設問ストリップ ===== */
+.es-strip {
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #ddd;
+  background: #fafbfc;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
-.es-pane-form {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 10px 12px 12px;
+.es-strip-page {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #7a848a;
+  white-space: nowrap;
+  margin: 0 4px;
 }
-/* スマホ: data-pane で一方だけを表示する */
-.es-form-layout[data-pane="form"] .es-pane-question { display: none; }
-.es-form-layout[data-pane="question"] .es-pane-form { display: none; }
+.es-strip-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e0e4e7;
+  background: #fff;
+  color: inherit;
+  border-radius: 20px;
+  padding: 8px 14px;
+  font-size: 13px;
+  min-height: 40px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.es-strip-chip.active {
+  border-color: #2196c9;
+  background: #eaf6fb;
+  font-weight: bold;
+}
+.es-strip-chip.locked {
+  background: #f2f4f5;
+  color: #8b959b;
+}
+.es-strip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid #b9c2c7;
+}
+.es-strip-dot.filled { background: #4caf50; border-color: #4caf50; }
+.es-strip-dot.locked { border-radius: 2px; background: #b9c2c7; border-color: #b9c2c7; }
 
 /* ===== 問題ページビューア ===== */
 .es-viewer {
@@ -297,6 +671,7 @@ export const OVERLAY_STYLES = `
   min-height: 36px;
   padding: 0 10px;
   font-size: 14px;
+  font-family: inherit;
 }
 .es-viewer-bar button:disabled {
   color: #bbb;
@@ -325,47 +700,153 @@ export const OVERLAY_STYLES = `
   min-width: 46px;
   text-align: center;
 }
-.es-viewer-scroll {
+.es-viewer-body {
   flex: 1 1 auto;
   min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.es-viewer-scroll {
+  width: 100%;
+  height: 100%;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
+/* 画像と枠を同じ箱に収める。幅を変えるとスクロール領域も広がる(transform: scale()
+   だとレイアウトが変わらず、拡大時に画像の端へスクロールできない) */
+.es-viewer-canvas {
+  position: relative;
+  width: 100%;
+}
 .es-viewer-img {
   display: block;
-  /* 幅を変えることでスクロール可能領域も広がる。transform: scale() だとレイアウトが
-     変わらず拡大時に画像の端へスクロールできないため、width で拡大する */
   width: 100%;
   max-width: none;
   height: auto;
 }
+.es-viewer-rims {
+  position: absolute;
+  inset: 0;
+}
+.es-rim {
+  position: absolute;
+  border: 2px dashed #9aa6ad;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .4);
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.es-rim.filled {
+  border-style: solid;
+  border-color: #4caf50;
+  background: rgba(76, 175, 80, .10);
+}
+.es-rim.active {
+  border-style: solid;
+  border-color: #2196c9;
+  background: rgba(33, 150, 201, .16);
+  box-shadow: 0 0 0 4px rgba(33, 150, 201, .22);
+}
+.es-rim.locked {
+  border-style: solid;
+  border-color: #b9c2c7;
+  background: rgba(185, 194, 199, .12);
+  cursor: default;
+}
+.es-rim-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translateY(-100%);
+  background: #8b959b;
+  color: #fff;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px 4px 0 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.es-rim.filled .es-rim-label { background: #4caf50; }
+.es-rim.active .es-rim-label { background: #2196c9; }
+.es-viewer-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 10px;
+  background: rgba(255, 255, 255, .94);
+  border: 1px solid #d5dbdf;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #5b6770;
+  pointer-events: none;
+}
+.es-viewer-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.es-legend-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.es-legend-swatch.filled { background: #4caf50; }
+.es-legend-swatch.active { background: #2196c9; }
+.es-legend-swatch.empty { border: 1.5px dashed #9aa6ad; }
 .es-viewer-empty {
   padding: 30px 12px;
   text-align: center;
   color: #666;
   font-size: 13px;
 }
-.es-field-pagelink {
-  border: none;
-  background: transparent;
-  color: #2196c9;
-  font-size: 13px;
-  padding: 4px 0;
-  min-height: 32px;
-}
 
-/* ===== PC: 2カラム。data-pane による display:none を同詳細度・後勝ちで打ち消す ===== */
+/* ===== PC: ビューアとエディタを左右に並べる ===== */
 @media (min-width: 900px) {
-  .es-pane-tabs { display: none; }
-  .es-form-layout { flex-direction: row; }
-  .es-form-layout[data-pane] .es-pane-question {
+  .es-work { flex-direction: row; }
+  .es-form[data-mode] .es-pane-question {
     display: flex;
-    flex: 0 0 46%;
+    flex: 1 1 58%;
     border-right: 1px solid #ddd;
   }
-  .es-form-layout[data-pane] .es-pane-form {
-    display: block;
-    flex: 1 1 54%;
+  .es-form[data-mode] .es-pane-form {
+    display: flex;
+    flex: 1 1 42%;
   }
+  .es-form[data-mode] .es-strip { display: flex; }
+  .es-form[data-mode] .es-mobile-bar { display: none; }
+  .es-editor-back { display: none !important; }
+  .es-savebar .es-editor-nav { display: none; }
+  .es-key-hints { display: flex; }
+  .es-field-name { display: none; }
+  .es-preview-wrap { margin-bottom: 14px; }
+}
+
+/* ===== スマホ: 入力中は問題ページの該当箇所だけを帯で見せる ===== */
+@media (max-width: 899px) {
+  .es-preview-head { display: none; }
+  /* 帯の見た目にするだけで、枠(.es-preview-wrap)は canvas と同じ大きさのままにする。
+     ここを width:100% にすると、canvas の左端と枠の左端がずれて
+     オーバーレイ画像(絶対配置)の位置計算が狂う */
+  .es-preview-wrap {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto 10px;
+  }
+  .es-preview-wrap canvas.es-crop { max-height: 96px; }
+  .es-editor-nav.pc-only { display: none; }
+  .es-editor-head .es-editor-name { display: none; }
+  .es-editor-title { text-align: right; }
+  .es-progress-count, .es-autosave { display: none; }
+  .es-progress-bar { width: 52px; }
+  .es-header-right { gap: 8px; }
+  .es-editor-head { padding: 8px 12px; }
+  .es-editor-name { font-size: 15px; }
+  .es-editor-body { padding: 10px 12px; }
+  .es-savebar { padding: 8px 12px 12px; }
 }
 `;
