@@ -3,11 +3,36 @@ import { toImageSrc } from "./cropPreview";
 /** ビューアに表示するページ画像の種別 */
 export type PageSource = "question" | "answer";
 
+/** ページ画像の上に重ねる解答欄の枠 */
+export interface RimFieldInfo {
+  id: number;
+  page: number;
+  /** [x, y, width, height]。base_sheet の座標系 */
+  rim: [number, number, number, number];
+  label: string;
+  /** easysmarkyで編集できない設問(選択肢・画像・複数スタンプ) */
+  locked: boolean;
+}
+
+export interface RimOptions {
+  fields: RimFieldInfo[];
+  /** rim の座標系。base_sheet.width / height */
+  sheetWidth: number;
+  sheetHeight: number;
+  isFilled: (fieldId: number) => boolean;
+  onSelect: (fieldId: number) => void;
+}
+
 export interface PageViewerOptions {
   /** report.base64_question_images(問題ページ)。無い回もある */
   questionImages: string[];
   /** report.base64_answer_images(解答用紙ページ) */
   answerImages: string[];
+  /**
+   * 解答欄の枠。rim は解答用紙の座標系なので、枠を出すのは「解答用紙」表示中だけにする。
+   * 問題ページ側で同じ座標が通用するかは実機で未確認のため重ねない。
+   */
+  rims?: RimOptions;
 }
 
 export interface PageViewerHandle {
@@ -16,6 +41,12 @@ export interface PageViewerHandle {
   goTo(source: PageSource, index: number): void;
   /** いま表示している種別。設問からのジャンプ先を決めるのに使う */
   currentSource(): PageSource;
+  /** 前後のページへ送る(キーボードショートカット用) */
+  step(delta: number): void;
+  /** その設問があるページを(いま見ている種別のまま)開き、枠を選択状態にする */
+  showField(fieldId: number): void;
+  /** 入力状況が変わったときに枠の色を塗り直す */
+  refreshRims(): void;
 }
 
 /** ズーム倍率。1 = ペイン幅にフィット */
@@ -38,10 +69,12 @@ export function pageArrayIndex(images: string[], page: number): number {
 export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   const questionImages = opts.questionImages ?? [];
   const answerImages = opts.answerImages ?? [];
+  const rims = opts.rims;
 
   let source: PageSource = questionImages.length > 0 ? "question" : "answer";
   let index = 0;
   let zoomStep = 0;
+  let activeFieldId: number | null = null;
 
   const el = document.createElement("div");
   el.className = "es-viewer";
@@ -107,15 +140,24 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   zoom.appendChild(zoomInBtn);
   bar.appendChild(zoom);
 
-  // --- 画像 ---
+  // --- 画像 + 解答欄の枠 ---
+  const body = document.createElement("div");
+  body.className = "es-viewer-body";
   const scroll = document.createElement("div");
   scroll.className = "es-viewer-scroll";
+  const canvas = document.createElement("div");
+  canvas.className = "es-viewer-canvas";
   const img = document.createElement("img");
   img.className = "es-viewer-img";
   img.alt = "";
   img.decoding = "async";
-  scroll.appendChild(img);
-  el.appendChild(scroll);
+  const rimLayer = document.createElement("div");
+  rimLayer.className = "es-viewer-rims";
+  canvas.appendChild(img);
+  canvas.appendChild(rimLayer);
+  scroll.appendChild(canvas);
+  body.appendChild(scroll);
+  el.appendChild(body);
 
   const emptyEl = document.createElement("div");
   emptyEl.className = "es-viewer-empty";
@@ -123,8 +165,93 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   emptyEl.style.display = "none";
   scroll.appendChild(emptyEl);
 
+  // --- 凡例(枠を出しているときだけ) ---
+  const legend = document.createElement("div");
+  legend.className = "es-viewer-legend";
+  legend.innerHTML =
+    '<span><span class="es-legend-swatch filled"></span>入力済み</span>' +
+    '<span><span class="es-legend-swatch active"></span>入力中</span>' +
+    '<span><span class="es-legend-swatch empty"></span>未入力</span>';
+  legend.style.display = "none";
+  body.appendChild(legend);
+
+  const rimEls = new Map<number, HTMLButtonElement>();
+
   function currentImages(): string[] {
     return source === "question" ? questionImages : answerImages;
+  }
+
+  /** いま枠を描いてよいか(解答用紙を表示していて、座標系が分かっているとき) */
+  function rimsVisible(): boolean {
+    return (
+      !!rims &&
+      source === "answer" &&
+      answerImages.length > 0 &&
+      rims.sheetWidth > 0 &&
+      rims.sheetHeight > 0
+    );
+  }
+
+  function renderRims(): void {
+    rimEls.clear();
+    rimLayer.innerHTML = "";
+    if (!rims || !rimsVisible()) {
+      rimLayer.style.display = "none";
+      legend.style.display = "none";
+      return;
+    }
+    rimLayer.style.display = "block";
+    legend.style.display = "flex";
+
+    for (const field of rims.fields) {
+      if (pageArrayIndex(answerImages, field.page) !== index) continue;
+      const [x, y, w, h] = field.rim;
+      const box = document.createElement("button");
+      box.type = "button";
+      box.className = "es-rim";
+      box.dataset.fieldId = String(field.id);
+      // ズーム段階が変わっても追従するよう、用紙サイズに対する百分率で置く
+      box.style.left = `${(x / rims.sheetWidth) * 100}%`;
+      box.style.top = `${(y / rims.sheetHeight) * 100}%`;
+      box.style.width = `${(w / rims.sheetWidth) * 100}%`;
+      box.style.height = `${(h / rims.sheetHeight) * 100}%`;
+
+      const label = document.createElement("span");
+      label.className = "es-rim-label";
+      box.appendChild(label);
+
+      if (field.locked) {
+        box.disabled = true;
+      } else {
+        box.addEventListener("click", () => rims.onSelect(field.id));
+      }
+      rimLayer.appendChild(box);
+      rimEls.set(field.id, box);
+    }
+    paintRims();
+  }
+
+  function paintRims(): void {
+    if (!rims) return;
+    for (const field of rims.fields) {
+      const box = rimEls.get(field.id);
+      if (!box) continue;
+      const active = field.id === activeFieldId;
+      const filled = rims.isFilled(field.id);
+      box.classList.toggle("locked", field.locked);
+      box.classList.toggle("active", active && !field.locked);
+      box.classList.toggle("filled", filled && !active && !field.locked);
+      const labelEl = box.querySelector(".es-rim-label");
+      if (labelEl) {
+        labelEl.textContent = field.locked
+          ? `${field.label} — 編集不可`
+          : active
+            ? `${field.label} — 入力中`
+            : filled
+              ? field.label
+              : `${field.label} — 未入力`;
+      }
+    }
   }
 
   function render(): void {
@@ -134,7 +261,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     questionTab?.classList.toggle("active", source === "question");
     answerTab?.classList.toggle("active", source === "answer");
 
-    img.style.display = hasImages ? "block" : "none";
+    canvas.style.display = hasImages ? "block" : "none";
     emptyEl.style.display = hasImages ? "none" : "block";
     countEl.textContent = hasImages ? `${index + 1} / ${images.length}` : "-";
     prevBtn.disabled = !hasImages || index <= 0;
@@ -142,7 +269,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     zoomOutBtn.disabled = zoomStep <= 0;
     zoomInBtn.disabled = zoomStep >= ZOOM_STEPS.length - 1;
 
-    img.style.width = `${ZOOM_STEPS[zoomStep] * 100}%`;
+    canvas.style.width = `${ZOOM_STEPS[zoomStep] * 100}%`;
     if (hasImages) {
       const nextSrc = toImageSrc(images[index]);
       // 同じページの再描画で読み込みが走らないようにする
@@ -150,6 +277,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     } else {
       img.removeAttribute("src");
     }
+    renderRims();
   }
 
   function goTo(nextSource: PageSource, nextIndex: number): void {
@@ -160,6 +288,29 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     zoomStep = 0;
     scroll.scrollTo(0, 0);
     render();
+  }
+
+  function step(delta: number): void {
+    goTo(source, index + delta);
+  }
+
+  function showField(fieldId: number): void {
+    activeFieldId = fieldId;
+    const field = rims?.fields.find((f) => f.id === fieldId);
+    const images = currentImages();
+    if (!field || images.length === 0) {
+      paintRims();
+      return;
+    }
+    // 種別(問題/解答用紙)は変えない。読んでいる途中で勝手に切り替わらないようにする
+    const wanted = pageArrayIndex(images, field.page);
+    if (index !== wanted) {
+      goTo(source, wanted);
+    } else {
+      paintRims();
+    }
+    // 拡大中でも選択した枠が見えるように寄せる
+    rimEls.get(fieldId)?.scrollIntoView({ block: "center", inline: "center" });
   }
 
   prevBtn.addEventListener("click", () => goTo(source, index - 1));
@@ -180,5 +331,12 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
 
   render();
 
-  return { element: el, goTo, currentSource: () => source };
+  return {
+    element: el,
+    goTo,
+    currentSource: () => source,
+    step,
+    showField,
+    refreshRims: paintRims,
+  };
 }

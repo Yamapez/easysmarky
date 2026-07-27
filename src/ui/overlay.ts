@@ -17,6 +17,18 @@ export interface CreateOverlayOptions {
   canOpenInNewTab?: boolean;
 }
 
+/**
+ * ヘッダは画面ごとに中身が変わる(一覧では easysmarky、フォームでは科目名・進捗)ため、
+ * 各ビューから差し替えられるようにスロットとして渡す。
+ */
+export interface HeaderHandle {
+  /** 左端の戻るボタン。null で消す */
+  setBack: (handler: (() => void) | null, label?: string) => void;
+  setTitle: (main: string, sub?: string) => void;
+  /** 「閉じる」の左に置く任意のDOM(進捗バーなど)。null で消す */
+  setStatus: (el: HTMLElement | null) => void;
+}
+
 const HOST_ID = "easysmarky-host";
 
 /** 新しく開いたタブに「起動してよい」と伝えるフラグ(値は発行時刻) */
@@ -46,6 +58,7 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
   let host: HTMLElement | null = null;
   let shadow: ShadowRoot;
   let content: HTMLElement;
+  let header: HeaderHandle;
   let scrollLockBackup: { html: string; body: string } | null = null;
 
   function build(): void {
@@ -68,9 +81,30 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     const panel = document.createElement("div");
     panel.className = "es-panel";
 
-    const header = document.createElement("div");
-    header.className = "es-header";
-    header.innerHTML = '<span class="es-title">easysmarky</span>';
+    const headerEl = document.createElement("div");
+    headerEl.className = "es-header";
+
+    const headerMain = document.createElement("div");
+    headerMain.className = "es-header-main";
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "es-header-back";
+    backBtn.style.display = "none";
+    const titleEl = document.createElement("span");
+    titleEl.className = "es-title";
+    titleEl.textContent = "easysmarky";
+    const subEl = document.createElement("span");
+    subEl.className = "es-header-sub";
+    headerMain.appendChild(backBtn);
+    headerMain.appendChild(titleEl);
+    headerMain.appendChild(subEl);
+    headerEl.appendChild(headerMain);
+
+    const headerRight = document.createElement("div");
+    headerRight.className = "es-header-right";
+    const statusSlot = document.createElement("div");
+    statusSlot.className = "es-header-status";
+    headerRight.appendChild(statusSlot);
 
     const actions = document.createElement("div");
     actions.className = "es-header-actions";
@@ -99,8 +133,27 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     closeBtn.addEventListener("click", () => setVisible(false));
     actions.appendChild(closeBtn);
 
-    header.appendChild(actions);
-    panel.appendChild(header);
+    headerRight.appendChild(actions);
+    headerEl.appendChild(headerRight);
+    panel.appendChild(headerEl);
+
+    let backHandler: (() => void) | null = null;
+    backBtn.addEventListener("click", () => backHandler?.());
+    header = {
+      setBack(handler, label = "← 科目一覧") {
+        backHandler = handler;
+        backBtn.textContent = label;
+        backBtn.style.display = handler ? "inline-block" : "none";
+      },
+      setTitle(main, sub = "") {
+        titleEl.textContent = main;
+        subEl.textContent = sub;
+      },
+      setStatus(el) {
+        statusSlot.innerHTML = "";
+        if (el) statusSlot.appendChild(el);
+      },
+    };
 
     content = document.createElement("div");
     content.className = "es-content";
@@ -129,8 +182,15 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     }
   }
 
+  function resetHeader(): void {
+    header.setBack(null);
+    header.setTitle("easysmarky");
+    header.setStatus(null);
+  }
+
   function showSheetPicker(): void {
     content.innerHTML = "";
+    resetHeader();
     // 一覧は全画面幅だと読みにくいので中央寄せのカラムに収める
     const column = document.createElement("div");
     column.className = "es-column";
@@ -142,9 +202,11 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
 
   function showFormView(sheet: SelectedSheet): void {
     content.innerHTML = "";
-    renderFormView(content, { sheet, onBack: showSheetPicker }).catch((err) =>
-      showError(content, err, () => showFormView(sheet)),
-    );
+    resetHeader();
+    renderFormView(content, { sheet, header, onBack: showSheetPicker }).catch((err) => {
+      resetHeader();
+      showError(content, err, () => showFormView(sheet));
+    });
   }
 
   return {
