@@ -12,6 +12,7 @@ npm run verify
   (mode は `list` / `view` / `edit`)
 - `drive.mjs` — 静的サーバの起動 → Chromium 起動 → CDP 操作 → 判定 まで行う。
   playwright/puppeteer は使わず、Node のグローバル `WebSocket` で CDP を直接叩いている
+  (Node 22未満だと `WebSocket is not defined` で落ちる。`package.json` の `engines.node` 参照)
 - 出力(スクリーンショット)は `out/`(gitignore 済み)
 
 `chromium` 以外を使う場合は `CHROME_BIN=google-chrome-stable npm run verify`。
