@@ -48,6 +48,14 @@ https://yamapez.github.io/easysmarky/easysmarky.user.js
 ※Chrome系でインストール画面が出ない場合は、拡張機能の設定で
 「デベロッパーモード」を有効にする必要があります(Tampermonkeyの仕様)。
 
+※インストールできても右下にボタンが出ない場合は、Tampermonkey側の設定
+(ダッシュボードでのスクリプト有効化・サイトアクセス許可・「ユーザースクリプトを許可する」
+トグル)だけでなく、**Chrome自体の拡張機能権限**も確認してください。ツールバーの
+パズルピースアイコン→Tampermonkeyの「サイトへのアクセスを管理」(または
+`chrome://extensions` のTampermonkey「詳細」→「サイトへのアクセス」)で、
+`digi-repo.smarky.jp` へのアクセスが許可されているか(「クリックしたときのみ」等に
+なっていないか)を確認・変更し、ページをリロードしてください。
+
 #### iOS Safari
 
 1. App Storeから「Userscripts」アプリ(無料)をインストール
