@@ -69,7 +69,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   formPane.className = "es-pane-form";
   layout.appendChild(formPane);
 
-  showPane("form");
+  // スマホでは問題文が見えないまま解答を求められるのを避けるため「問題」から始める。
+  // PCではメディアクエリが両ペインを表示するので、この値は見た目に影響しない。
+  showPane("question");
 
   questionTabBtn.addEventListener("click", () => showPane("question"));
   formTabBtn.addEventListener("click", () => showPane("form"));
