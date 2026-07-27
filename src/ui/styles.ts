@@ -378,6 +378,9 @@ export const OVERLAY_STYLES = `
   font-size: 11px;
   color: #98a3aa;
 }
+.es-preview-row {
+  display: block;
+}
 .es-preview-wrap {
   position: relative;
   display: inline-block;
@@ -395,6 +398,22 @@ export const OVERLAY_STYLES = `
   position: absolute;
   pointer-events: none;
   image-rendering: pixelated;
+}
+/* 問題プレビュー(解答欄の横に置く「目安」の切り出し画像)は、狭い画面では出さない */
+.es-question-preview {
+  display: none;
+}
+.es-question-preview-head {
+  font-size: 12px;
+  color: #7a848a;
+  margin-bottom: 6px;
+}
+.es-crop-question {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
 }
 .es-editor-tools {
   display: flex;
@@ -822,7 +841,18 @@ export const OVERLAY_STYLES = `
   .es-savebar .es-editor-nav { display: none; }
   .es-key-hints { display: flex; }
   .es-field-name { display: none; }
-  .es-preview-wrap { margin-bottom: 14px; }
+  .es-preview-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .es-preview-wrap { flex: 0 0 auto; margin-bottom: 14px; }
+  .es-question-preview {
+    display: block;
+    flex: 1 1 240px;
+    min-width: 0;
+  }
 }
 
 /* ===== スマホ: 入力中は問題ページの該当箇所だけを帯で見せる ===== */

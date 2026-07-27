@@ -8,6 +8,8 @@ export interface FieldEditorOptions {
   field: EditableField;
   /** その設問がある解答用紙ページの画像 */
   pageImage: string | null;
+  /** その設問がある問題ページの画像。PC幅でのみ解答欄プレビューの横に表示する */
+  questionPageImage: string | null;
   cutMargin: number;
   onChange: (field: EditableField) => void;
   /** 問題ビューアをこの設問のページへ送る(編集不可の設問から使う) */
@@ -81,6 +83,10 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     "<span>解答欄プレビュー</span><span class=\"es-preview-note\">保存後の見た目と同じ</span>";
   el.appendChild(previewHead);
 
+  const previewRow = document.createElement("div");
+  previewRow.className = "es-preview-row";
+  el.appendChild(previewRow);
+
   const previewWrap = document.createElement("div");
   previewWrap.className = "es-preview-wrap";
   const cropCanvas = document.createElement("canvas");
@@ -90,11 +96,31 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   overlayImg.style.display = "none";
   previewWrap.appendChild(cropCanvas);
   previewWrap.appendChild(overlayImg);
-  el.appendChild(previewWrap);
+  previewRow.appendChild(previewWrap);
 
   if (opts.pageImage) {
     drawCropPreview(cropCanvas, opts.pageImage, field.raw.rim, cutMargin).catch(() => {
       /* プレビュー画像が読めない場合はテキスト入力のみ提供する */
+    });
+  }
+
+  // --- 問題プレビュー(解答欄と同じ範囲を問題ページから切り出したもの。PCのみ表示) ---
+  // rim は解答用紙の座標系なので、問題ページ側で同じ範囲が正しく対応する保証はない(実機未確認)。
+  // そのため「目安」であることをラベルで明示する。
+  if (opts.questionPageImage) {
+    const questionPreview = document.createElement("div");
+    questionPreview.className = "es-question-preview";
+    const questionHead = document.createElement("div");
+    questionHead.className = "es-question-preview-head";
+    questionHead.textContent = "問題(目安・ズレる場合があります)";
+    const questionCanvas = document.createElement("canvas");
+    questionCanvas.className = "es-crop es-crop-question";
+    questionPreview.appendChild(questionHead);
+    questionPreview.appendChild(questionCanvas);
+    previewRow.appendChild(questionPreview);
+
+    drawCropPreview(questionCanvas, opts.questionPageImage, field.raw.rim, cutMargin).catch(() => {
+      /* 問題ページ側の切り出しが読めない場合は非表示のままにする */
     });
   }
 

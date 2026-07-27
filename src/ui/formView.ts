@@ -362,6 +362,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     editor = createFieldEditor({
       field,
       pageImage: answerImages[pageArrayIndex(answerImages, field.raw.page)] ?? null,
+      questionPageImage: questionImages[pageArrayIndex(questionImages, field.raw.page)] ?? null,
       cutMargin,
       onChange: (changed) => {
         // エディタは複製を編集するので、変更を元の配列へ書き戻す

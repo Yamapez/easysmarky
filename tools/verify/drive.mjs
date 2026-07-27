@@ -167,7 +167,12 @@ function assertAll(label, r) {
       `${s.initial.questionPaneDisplay}/${s.initial.formPaneDisplay}`);
     check(`${label}: 初期表示で既存下書きのプレビューが描画される`,
       s.initial.field1.display === "block" && parseFloat(s.initial.field1.width) > 0, s.initial.field1);
+    check(`${label}: 解答欄プレビューの横に問題プレビューが出る`,
+      s.initial.questionPreviewDisplay !== "none" && s.initial.questionPreviewCanvasWidth > 0,
+      { display: s.initial.questionPreviewDisplay, width: s.initial.questionPreviewCanvasWidth });
   } else {
+    check(`${label}: 問題プレビューは狭い画面では出さない`,
+      s.initial.questionPreviewDisplay === "none", s.initial.questionPreviewDisplay);
     check(`${label}: 問題ページから始まり入力ペインは畳まれている`,
       s.initial.dataMode === "view" && s.initial.formPaneDisplay === "none",
       `${s.initial.dataMode}/${s.initial.formPaneDisplay}`);

@@ -240,6 +240,12 @@ async function runAssertions() {
     // 初期表示は「問題」ページなので解答欄の枠は出ない(rim座標は解答用紙のもの)
     rimCount: qa(".es-rim").length,
     field1: overlayState(),
+    // 解答欄プレビューの横に置く問題プレビュー(目安の切り出し)はPC幅だけで見えるはず
+    questionPreviewDisplay: getComputedStyle(q(".es-question-preview")).display,
+    questionPreviewCanvasWidth: (() => {
+      const c = q(".es-crop-question");
+      return c ? Math.round(c.getBoundingClientRect().width) : null;
+    })(),
   };
 
   // --- 解答用紙タブ: 解答欄の枠と凡例が出るか ---
