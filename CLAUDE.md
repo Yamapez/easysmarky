@@ -28,7 +28,9 @@ npm run verify                   # ビルド + ヘッドレスChromiumでのUI�
 ## リリース・デプロイ
 
 - **リリース時は必ず `package.json` の `version` を上げる。** この値が userscript の `@version` に埋め込まれ(vite.config.ts)、Tampermonkey等の自動更新はこの比較で動く。
-- 配布は GitHub Pages: `gh-pages` ブランチのルートに `easysmarky.iife.js`・`easysmarky.user.js`・`index.html` を置く(mainのソースとは別管理)。`npm run build` 後、gh-pages ブランチの同名ファイルを差し替えてコミット・プッシュする。
+- 配布は GitHub Pages: `gh-pages` ブランチのルートに `easysmarky.iife.js`・`easysmarky.user.js`・`index.html` を置く(mainのソースとは別管理)。`index.html` は gh-pages 側だけの手書きファイルで main に実体は無いので、デプロイ時に上書きしない。
+- **反映は `.github/workflows/deploy-gh-pages.yml` が自動で行う。** `package.json` を変更した push(または手動の `workflow_dispatch`)をトリガーに、型チェック→`npm run verify`→gh-pages側の `@version` と現在のバージョンを比較→違えば `easysmarky.iife.js`/`easysmarky.user.js` だけを差し替えてコミット・プッシュする(gh-pagesはCI内で `git worktree` を使い、mainの作業ツリーには持ち込まない)。バージョンが変わっていなければ何もせずスキップする。
+- 手動で反映したい場合のみ、`npm run build` 後に `git worktree add ../gh-pages-deploy origin/gh-pages` などで別ディレクトリにgh-pagesを出し、対象2ファイルを差し替えてコミット・プッシュする。
 
 ## ビルド構成
 
