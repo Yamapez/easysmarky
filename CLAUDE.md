@@ -11,10 +11,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm run build                    # dist/easysmarky.iife.js と dist/easysmarky.user.js を生成
 npm run dev                      # watchビルド(ブックマークレット版=iifeのみ)
+npm run verify                   # ビルド + ヘッドレスChromiumでのUI回帰チェック
 ./node_modules/.bin/tsc --noEmit # 型チェック(ビルドは型チェックしないため必須)
 ```
 
-テスト・リンターは存在しない。検証は型チェック+実機(Smarky上での動作確認)。
+リンターは無い。ユニットテストも無く、代わりに `npm run verify`(`tools/verify/`)が
+**実際の配布物 `dist/easysmarky.iife.js` を、APIをスタブしたページに読み込ませて
+ヘッドレスChromiumで操作する回帰チェック**を行う。Smarkyへの接続は不要。
+`src/ui/` や `src/save/save.ts` を触ったら必ず流すこと。前提と落とし穴は
+`tools/verify/README.md` に書いてある(特に「スマホのプレビュー描画は ResizeObserver
+だけが支えている」と「`--virtual-time-budget` は使わない」)。
+
+これで確認できないもの(問題文がどちらのタブに載るか、iOS Safari の `100dvh`、
+実サーバへの保存)は実機での確認が要る。
 
 ## リリース・デプロイ
 

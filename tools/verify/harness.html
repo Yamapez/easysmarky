@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>easysmarky harness</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 20px; }
+  .filler { height: 2000px; background: linear-gradient(#fafafa, #ddd); padding: 20px; }
+  #es-results { white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>ホストページ(Smarky代わり)</h1>
+<pre id="es-results">PENDING</pre>
+<div class="filler">背後のページ。オーバーレイ表示中はスクロールしないはず。</div>
+
+<script>
+// ============================================================
+// ダミーのページ画像
+// ============================================================
+function makePage(text, lines, w, h, bg) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  g.fillStyle = bg; g.fillRect(0, 0, w, h);
+  g.fillStyle = "#111";
+  g.font = "bold 34px sans-serif";
+  g.fillText(text, 40, 60);
+  g.font = "26px sans-serif";
+  lines.forEach((l, i) => g.fillText(l, 40, 130 + i * 44));
+  g.strokeStyle = "#888"; g.lineWidth = 2;
+  g.strokeRect(40, 400, w - 80, 120);
+  g.strokeRect(40, 600, w - 80, 120);
+  g.strokeRect(40, 800, w - 80, 120);
+  return c.toDataURL("image/png");
+}
+
+const QUESTION_PAGE_1 = makePage("問題 第1回", [
+  "問1 次の文章を読んで、下の問いに答えなさい。",
+  "  日本の高度経済成長期には、都市部への人口集中が進み、",
+  "  地方では過疎化が問題となった。",
+  "(1) 高度経済成長期はおよそ何年から何年までか答えなさい。",
+  "(2) 過疎化が地域社会に与えた影響を60字以内で述べなさい。",
+], 1000, 1400, "#ffffff");
+
+const QUESTION_PAGE_2 = makePage("問題 第1回(2ページ目)", [
+  "問2 次の語句について説明しなさい。",
+  "(1) ドーナツ化現象",
+  "(2) Uターン現象",
+], 1000, 1400, "#ffffff");
+
+const ANSWER_PAGE_1 = makePage("解答用紙 第1回", [
+  "問1(1) 解答欄 ↓",
+], 1000, 1400, "#fffdf5");
+
+// ============================================================
+// ダミーAPIレスポンス
+// ============================================================
+const CURRENT_USER = {
+  user: { login_id: "85_2025HF249", id: 1, role: "student", name: "テスト太郎",
+          school: { id: 85, name: "テスト高校" } },
+};
+
+const SHEET_LIST = {
+  student_subject_rows: [{
+    student_subject: { subject_code: "JPN", nendo: 2025, report_count: 1, subject_name: "国語総合" },
+    student_sheets: [null],
+    base_sheets: [{
+      id: 1001, sheet_code: "JPN-1", report_no: 1, answer_image_completed: false,
+      is_published: true, publish_at: null,
+      std_deadline_at: "2026-08-31T00:00:00Z", final_deadline_at: null, sheet_type: 1,
+    }],
+  }],
+  max_report_count: 1, report_nos: [1], sheet_types: [1],
+};
+
+function field(id, part3, rim, answerTexts) {
+  return {
+    id, page: 1, kind: 0, part1: "問1", part2: "(1)", part3,
+    allot: 5, rim, answer_type: 1,
+    answer_texts: answerTexts || [], answer_images: [], base64_canvas: null, choice_texts: [],
+  };
+}
+
+// 設問1は「下書きを再開した」状態を再現するため、既存の answer_texts を持たせる。
+// これが無いと updatePreview() の空テキスト早期returnに入り、
+// スマホ初期表示(フォームが display:none)からの復帰経路を検証できない。
+const EXISTING_TEXT = {
+  id: 11, base_sheet_field_id: 1, idx: 0,
+  text: "既存の下書きテキスト", color: "#000000",
+  font_size: 40, line_height: 1.2,
+  x: null, y: null, width: null, height: null, direction: 1,
+};
+
+const REPORT = {
+  base_sheet: { id: 1001, width: 1000, height: 1400, sheet_type: 1 },
+  base_sheet_fields: [
+    field(1, "ア", [40, 400, 920, 120], [EXISTING_TEXT]),
+    field(2, "イ", [40, 600, 920, 120]),
+    field(3, "ウ", [40, 800, 920, 120]),
+  ],
+  base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
+  base64_answer_images: [ANSWER_PAGE_1],
+  message: null, before_student_sheet_id: null, subject_name: "国語総合 第1回",
+  cut_margin: 20, scored_user_name: null,
+  answer_image_discriptions: [], question_image_discriptions: [],
+  rejection_student_sheet_log: null, status: 1, movie_contents: [],
+};
+
+// ============================================================
+// fetch スタブ(保存はステートフル: 保存された answer_texts を REPORT に書き戻す)
+// ============================================================
+const POST_LOG = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = async (input, init) => {
+  const url = String(input);
+  const json = (obj) => new Response(JSON.stringify(obj), {
+    status: 200, headers: { "Content-Type": "application/json" },
+  });
+  if (url.startsWith("/api/current_user")) return json(CURRENT_USER);
+  if (url.startsWith("/api/student/student_sheet_list")) return json(SHEET_LIST);
+
+  if (url.startsWith("/api/student/digital_report/save")) {
+    const form = init && init.body;
+    const entry = { zipBytes: null, fieldCount: 0, texts: [], error: null };
+    try {
+      const file = form.get("file");
+      entry.zipBytes = file ? file.size : null;
+      const params = JSON.parse(form.get("param_base_sheet_fields"));
+      entry.fieldCount = params.length;
+      // 実サーバと同じく、保存された内容が以後のGETに反映されるようにする
+      for (const p of params) {
+        const target = REPORT.base_sheet_fields.find((f) => f.id === p.id);
+        if (target) target.answer_texts = p.answer_texts || [];
+        entry.texts.push({ id: p.id, text: (p.answer_texts && p.answer_texts[0] && p.answer_texts[0].text) || "" });
+      }
+    } catch (e) {
+      entry.error = String(e);
+    }
+    POST_LOG.push(entry);
+    return json({ ok: true });
+  }
+
+  if (url.startsWith("/api/student/digital_report")) return json(REPORT);
+  return realFetch(input, init);
+};
+
+// ============================================================
+// 自動駆動 (?auto=assert | ?auto=view)
+// ============================================================
+const params = new URLSearchParams(location.search);
+const AUTO = params.get("auto");
+const PANE = params.get("pane") || "question";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(fn, label, timeout = 8000) {
+  const start = Date.now();
+  for (;;) {
+    let v = null;
+    try { v = fn(); } catch (e) { v = null; }
+    if (v) return v;
+    if (Date.now() - start > timeout) throw new Error("timeout waiting for " + label);
+    await sleep(50);
+  }
+}
+const shadow = () => {
+  const host = document.getElementById("easysmarky-host");
+  return host && host.shadowRoot;
+};
+const q = (sel) => { const s = shadow(); return s && s.querySelector(sel); };
+const qa = (sel) => { const s = shadow(); return s ? Array.from(s.querySelectorAll(sel)) : []; };
+
+function overlayState(i) {
+  const wraps = qa(".es-preview-wrap");
+  const wrap = wraps[i];
+  if (!wrap) return null;
+  const canvas = wrap.querySelector("canvas.es-crop");
+  const img = wrap.querySelector(".es-preview-overlay");
+  const renderedWidth = canvas.getBoundingClientRect().width;
+  return {
+    renderedWidth: Math.round(renderedWidth * 100) / 100,
+    intrinsicWidth: canvas.width,
+    display: img.style.display,
+    width: img.style.width,
+    left: img.style.left,
+    // updatePreview が使うスケールと、実際に当たっている幅の比が一致するか照合する材料
+    scale: canvas.width ? Math.round((renderedWidth / canvas.width) * 10000) / 10000 : null,
+  };
+}
+
+async function runAssertions() {
+  const results = { mode: "assert", viewport: { w: innerWidth, h: innerHeight }, steps: {} };
+  const t0 = Date.now();
+
+  await waitFor(() => q(".es-list-item"), "sheet list");
+  q(".es-list-item").click();
+  await waitFor(() => q(".es-form-layout"), "form layout");
+  await waitFor(() => qa(".es-preview-wrap").length >= 3, "field rows");
+  await sleep(600); // 画像デコード + 初回プレビュー描画待ち
+
+  // 独立した ResizeObserver を同じ canvas に張り、発火の有無・タイミングを記録する。
+  // 「プレビューが描かれない」原因が RO 未発火なのか updatePreview の早期returnなのかを切り分ける。
+  const probeLog = [];
+  const probeCanvas = qa(".es-preview-wrap")[0].querySelector("canvas.es-crop");
+  const probeRO = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      probeLog.push({ at: Date.now() - t0, w: Math.round(e.contentRect.width * 100) / 100 });
+    }
+  });
+  probeRO.observe(probeCanvas);
+  await sleep(300);
+
+  const layout = q(".es-form-layout");
+  const isTwoPane = matchMedia("(min-width: 900px)").matches;
+  results.steps.initial = {
+    dataPane: layout.dataset.pane,
+    twoPaneMediaQuery: isTwoPane,
+    tabsDisplay: getComputedStyle(q(".es-pane-tabs")).display,
+    questionPaneDisplay: getComputedStyle(q(".es-pane-question")).display,
+    formPaneDisplay: getComputedStyle(q(".es-pane-form")).display,
+    // 既存下書きを持つ設問1のプレビュー状態
+    field1: overlayState(0),
+  };
+
+  // --- 最重要: スマホ初期表示(フォーム非表示)から「解答」タブを押したときに描画されるか ---
+  const probeBeforeTab = probeLog.length;
+  const formTabBtn = qa(".es-pane-tabs button")[1];
+  formTabBtn.click();
+  await sleep(1200);
+  results.steps.afterFormTab = {
+    dataPane: layout.dataset.pane,
+    field1: overlayState(0),
+    roFiredOnTabSwitch: probeLog.length - probeBeforeTab,
+    roLog: probeLog.slice(),
+  };
+
+  // --- ResizeObserver: 幅を変えたら再計算されるか / ping-pong しないか ---
+  const formPane = q(".es-pane-form");
+  const img1 = qa(".es-preview-wrap")[0].querySelector(".es-preview-overlay");
+  let mutations = 0;
+  const mo = new MutationObserver(() => { mutations++; });
+  mo.observe(img1, { attributes: true, attributeFilter: ["style", "src"] });
+
+  const before = overlayState(0);
+  formPane.style.maxWidth = "320px";
+  await sleep(400);
+  const mutAt400 = mutations;
+  const afterShrink = overlayState(0);
+  await sleep(900);
+  const mutAt1300 = mutations;
+
+  formPane.style.maxWidth = "";
+  await sleep(900);
+  const afterRestore = overlayState(0);
+  mo.disconnect();
+  probeRO.disconnect();
+
+  // overlayImg の幅は「テキストPNGの実寸 × scale」なので、
+  // scale に比例していれば再計算が正しく効いている
+  const ratio = (s) => (s && s.width && s.scale ? Math.round((parseFloat(s.width) / s.scale) * 100) / 100 : null);
+
+  results.steps.resize = {
+    before, afterShrink, afterRestore,
+    pngWidthBefore: ratio(before),
+    pngWidthAfterShrink: ratio(afterShrink),
+    pngWidthAfterRestore: ratio(afterRestore),
+    // 同じテキストなら PNG 実寸は変わらないはず。ズレていれば再計算が漏れている
+    rescaledCorrectly:
+      ratio(afterShrink) !== null && ratio(afterRestore) !== null
+        ? Math.abs(ratio(afterShrink) - ratio(afterRestore)) < 1
+        : null,
+    mutationCallbacksAt400ms: mutAt400,
+    mutationCallbacksAt1300ms: mutAt1300,
+    roLogFull: probeLog.slice(),
+  };
+
+  // --- 入力 → プレビュー ---
+  const textareas = qa("textarea.es-textarea");
+  textareas[1].value = "都市部へ人口が流出し、地域の担い手が不足した。";
+  textareas[1].dispatchEvent(new Event("input", { bubbles: true }));
+  await sleep(500);
+  results.steps.typed = { field2: overlayState(1) };
+
+  // --- 下書き保存の往復 ---
+  const saveBtn = q(".es-save-btn");
+  results.steps.save = { disabledBeforeClick: saveBtn.disabled };
+  saveBtn.click();
+  await waitFor(() => {
+    const t = q(".es-save-status").textContent || "";
+    return t && !t.includes("保存中");
+  }, "save status", 15000);
+  await sleep(300);
+  results.steps.save.status = q(".es-save-status").textContent;
+  results.steps.save.postCount = POST_LOG.length;
+  results.steps.save.post = POST_LOG[0] || null;
+  results.steps.save.serverTextsAfterSave =
+    REPORT.base_sheet_fields.map((f) => ({ id: f.id, text: (f.answer_texts[0] || {}).text || "" }));
+
+  // --- 背景スクロールのロック ---
+  results.steps.scrollLock = {
+    html: document.documentElement.style.overflow,
+    body: document.body.style.overflow,
+  };
+
+  return results;
+}
+
+async function runView(pane) {
+  const want = pane || PANE;
+  if (!q(".es-form-layout")) {
+    await waitFor(() => q(".es-list-item"), "sheet list");
+    q(".es-list-item").click();
+    await waitFor(() => q(".es-form-layout"), "form layout");
+    await waitFor(() => qa(".es-preview-wrap").length >= 3, "field rows");
+    // 下書きが入っている状態で見た目を確認したいので、空の設問にも入力しておく
+    const textareas = qa("textarea.es-textarea");
+    if (textareas[1] && !textareas[1].value) {
+      textareas[1].value = "都市部へ人口が流出し、地域の担い手が不足した。";
+      textareas[1].dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await sleep(900);
+  }
+  const tabs = qa(".es-pane-tabs button");
+  if (want === "form") tabs[1].click();
+  else tabs[0].click();
+  await sleep(900);
+  return { mode: "view", pane: want, viewport: { w: innerWidth, h: innerHeight } };
+}
+
+// CDPドライバから呼ぶ用(実時間で動く。--virtual-time-budget では
+// ResizeObserver の配信タイミングが実機と変わるため、こちらを本命にする)
+window.__esAssert = () => runAssertions();
+window.__esView = (pane) => runView(pane);
+
+if (AUTO) {
+  window.addEventListener("load", async () => {
+    const out = document.getElementById("es-results");
+    try {
+      const res = AUTO === "view" ? await runView(PANE) : await runAssertions();
+      out.textContent = "RESULTS " + JSON.stringify(res, null, 1);
+    } catch (e) {
+      out.textContent = "RESULTS " + JSON.stringify({ fatal: String(e && e.stack || e) }, null, 1);
+    }
+  });
+}
+</script>
+<script src="/dist/easysmarky.iife.js"></script>
+</body>
+</html>
