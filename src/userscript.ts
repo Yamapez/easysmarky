@@ -6,6 +6,9 @@ import {
   createOverlay,
   type EasySmarkyController,
 } from "./ui/overlay";
+import { checkForUpdate } from "./update/checkForUpdate";
+import { showUpdateToast } from "./update/toast";
+import { dismissVersion } from "./storage/updateState";
 
 declare global {
   interface Window {
@@ -70,6 +73,17 @@ function addLauncher(): void {
   document.body.appendChild(button);
 }
 
+async function runUpdateCheck(): Promise<void> {
+  try {
+    const latest = await checkForUpdate(__EASYSMARKY_VERSION__);
+    if (latest) showUpdateToast(latest, () => dismissVersion(latest));
+  } catch {
+    // 通知が出ないだけで機能に影響しないため握りつぶす
+  }
+}
+
 addLauncher();
 
 if (consumeAutostartFlag()) launch();
+
+void runUpdateCheck();

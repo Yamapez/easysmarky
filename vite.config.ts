@@ -40,6 +40,9 @@ export default defineConfig(({ mode }) => {
   const isUserscript = mode === "userscript";
   return {
     plugins: isUserscript ? [userscriptBanner()] : [],
+    define: {
+      __EASYSMARKY_VERSION__: JSON.stringify(pkg.version),
+    },
     build: {
       lib: {
         entry: resolve(
