@@ -69,6 +69,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   const cutMargin = report.cut_margin;
   const answerImages = report.base64_answer_images ?? [];
   const questionImages = report.base64_question_images ?? [];
+  // rim の座標系。ページ画像の実解像度とは一致しないことがあるので、枠オーバーレイ
+  // (pageViewer)と切り出しプレビュー(fieldEditor)の両方でこれを基準に換算する
+  const sheetWidth = report.base_sheet?.width ?? 0;
+  const sheetHeight = report.base_sheet?.height ?? 0;
 
   const fields: EditableField[] = (report.base_sheet_fields ?? [])
     .slice()
@@ -213,8 +217,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     answerImages,
     rims: {
       fields: rimFields,
-      sheetWidth: report.base_sheet?.width ?? 0,
-      sheetHeight: report.base_sheet?.height ?? 0,
+      sheetWidth,
+      sheetHeight,
       isFilled: (id) => {
         const f = fieldById.get(id);
         return !!f && isFilledField(f);
@@ -364,6 +368,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       pageImage: answerImages[pageArrayIndex(answerImages, field.raw.page)] ?? null,
       questionPageImage: questionImages[pageArrayIndex(questionImages, field.raw.page)] ?? null,
       cutMargin,
+      sheetWidth,
+      sheetHeight,
       onChange: (changed) => {
         // エディタは複製を編集するので、変更を元の配列へ書き戻す
         const index = fields.findIndex((f) => f.raw.id === changed.raw.id);

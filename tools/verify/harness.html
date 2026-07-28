@@ -18,21 +18,48 @@
 <script>
 // ============================================================
 // ダミーのページ画像
+//
+// 実機の Smarky では、ページ画像の解像度が base_sheet の座標系(SHEET_W×SHEET_H)と
+// 一致するとは限らない。ここをわざと食い違わせておかないと、rim をそのまま画像ピクセルと
+// して扱う実装ミス(= 解答欄プレビューの切り出し範囲がズレる)を検出できない。
+// 描画はすべて base_sheet 座標で書き、ctx.scale() で解像度倍率を掛ける。
 // ============================================================
-function makePage(text, lines, w, h, bg) {
+const SHEET_W = 1000;
+const SHEET_H = 1400;
+/** 解答用紙画像の解像度倍率。base_sheet 座標 × これ = 画像ピクセル */
+const ANSWER_IMAGE_SCALE = 2;
+/** 問題ページ画像の解像度倍率(解答用紙とも違う値にしておく) */
+const QUESTION_IMAGE_SCALE = 1.5;
+const PAGE_BG_ANSWER = "#fffdf5";
+
+// 解答欄の唯一の出所。REPORT の rim も、ページ画像に描く枠も、ここから作る。
+// 塗り色は「切り出した範囲が本当に解答欄と重なっているか」を画素で確かめるための目印。
+const RIMS = [
+  { id: 1, part3: "ア", rim: [40, 400, 920, 120], fill: "#ffe3e3" },
+  { id: 2, part3: "イ", rim: [40, 600, 920, 120], fill: "#e3ffe8" },
+  // 用紙の左端に接する解答欄。cut_margin ぶんが用紙の外へ出るので、
+  // 切り出しのクランプ(src/ui/cropPreview.ts)が効いているかをここで見る。
+  { id: 3, part3: "ウ", rim: [0, 800, 960, 120], fill: "#e3e9ff" },
+];
+
+function makePage(text, lines, bg, scale) {
   const c = document.createElement("canvas");
-  c.width = w; c.height = h;
+  c.width = SHEET_W * scale; c.height = SHEET_H * scale;
   const g = c.getContext("2d");
-  g.fillStyle = bg; g.fillRect(0, 0, w, h);
+  g.scale(scale, scale);
+  g.fillStyle = bg; g.fillRect(0, 0, SHEET_W, SHEET_H);
   g.fillStyle = "#111";
   g.font = "bold 34px sans-serif";
   g.fillText(text, 40, 60);
   g.font = "26px sans-serif";
   lines.forEach((l, i) => g.fillText(l, 40, 130 + i * 44));
-  g.strokeStyle = "#888"; g.lineWidth = 2;
-  g.strokeRect(40, 400, w - 80, 120);
-  g.strokeRect(40, 600, w - 80, 120);
-  g.strokeRect(40, 800, w - 80, 120);
+  for (const r of RIMS) {
+    const [x, y, w, h] = r.rim;
+    g.fillStyle = r.fill;
+    g.fillRect(x, y, w, h);
+    g.strokeStyle = "#888"; g.lineWidth = 2;
+    g.strokeRect(x, y, w, h);
+  }
   return c.toDataURL("image/png");
 }
 
@@ -42,17 +69,17 @@ const QUESTION_PAGE_1 = makePage("問題 第1回", [
   "  地方では過疎化が問題となった。",
   "(1) 高度経済成長期はおよそ何年から何年までか答えなさい。",
   "(2) 過疎化が地域社会に与えた影響を60字以内で述べなさい。",
-], 1000, 1400, "#ffffff");
+], "#ffffff", QUESTION_IMAGE_SCALE);
 
 const QUESTION_PAGE_2 = makePage("問題 第1回(2ページ目)", [
   "問2 次の語句について説明しなさい。",
   "(1) ドーナツ化現象",
   "(2) Uターン現象",
-], 1000, 1400, "#ffffff");
+], "#ffffff", QUESTION_IMAGE_SCALE);
 
 const ANSWER_PAGE_1 = makePage("解答用紙 第1回", [
   "問1(1) 解答欄 ↓",
-], 1000, 1400, "#fffdf5");
+], PAGE_BG_ANSWER, ANSWER_IMAGE_SCALE);
 
 // ============================================================
 // ダミーAPIレスポンス
@@ -94,12 +121,9 @@ const EXISTING_TEXT = {
 };
 
 const REPORT = {
-  base_sheet: { id: 1001, width: 1000, height: 1400, sheet_type: 1 },
-  base_sheet_fields: [
-    field(1, "ア", [40, 400, 920, 120], [EXISTING_TEXT]),
-    field(2, "イ", [40, 600, 920, 120]),
-    field(3, "ウ", [40, 800, 920, 120]),
-  ],
+  base_sheet: { id: 1001, width: SHEET_W, height: SHEET_H, sheet_type: 1 },
+  base_sheet_fields: RIMS.map((r, i) =>
+    field(r.id, r.part3, r.rim, i === 0 ? [EXISTING_TEXT] : [])),
   base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
   base64_answer_images: [ANSWER_PAGE_1],
   message: null, before_student_sheet_id: null, subject_name: "国語総合 第1回",
@@ -187,16 +211,43 @@ function overlayState() {
   const canvas = wrap.querySelector("canvas.es-crop");
   const img = wrap.querySelector(".es-preview-overlay");
   if (!canvas || !img) return null;
-  const renderedWidth = canvas.getBoundingClientRect().width;
+  const box = canvas.getBoundingClientRect();
+  const px = (v) => (v ? parseFloat(v) : null);
   return {
-    renderedWidth: Math.round(renderedWidth * 100) / 100,
+    renderedWidth: Math.round(box.width * 100) / 100,
+    renderedHeight: Math.round(box.height * 100) / 100,
+    // canvas の内部解像度は「ページ画像のピクセル数」であって base_sheet の座標系ではない
     intrinsicWidth: canvas.width,
+    intrinsicHeight: canvas.height,
     display: img.style.display,
     width: img.style.width,
     left: img.style.left,
+    // 文字画像の中心。解答欄の中心と一致しているはず(フォント実測値に依存しない検査)
+    centerX: px(img.style.left) != null ? px(img.style.left) + px(img.style.width) / 2 : null,
+    centerY: px(img.style.top) != null ? px(img.style.top) + px(img.style.height) / 2 : null,
     // updatePreview が使うスケールと、実際に当たっている幅の比が一致するか照合する材料
-    scale: canvas.width ? Math.round((renderedWidth / canvas.width) * 10000) / 10000 : null,
+    scale: canvas.width ? Math.round((box.width / canvas.width) * 10000) / 10000 : null,
   };
+}
+
+/** 切り出し canvas の内部解像度。非表示でも読める(display:none でも width 属性は残る) */
+function cropSize(sel) {
+  const c = q(sel);
+  return c ? { intrinsicWidth: c.width, intrinsicHeight: c.height } : null;
+}
+
+/**
+ * 切り出し canvas の画素を1点だけ読む(fx,fy は 0..1 の相対位置)。
+ * ページ画像は同一オリジンの data URL なので canvas は汚染されず getImageData が使える。
+ * 切り出しは等倍(ソース矩形 = destサイズ)なのでリサンプリングされず、色は完全一致で比べられる。
+ */
+function cropPixel(sel, fx, fy) {
+  const c = q(sel);
+  if (!c || !c.width) return null;
+  const x = Math.min(c.width - 1, Math.max(0, Math.round(c.width * fx)));
+  const y = Math.min(c.height - 1, Math.max(0, Math.round(c.height * fy)));
+  const d = c.getContext("2d").getImageData(x, y, 1, 1).data;
+  return "#" + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, "0")).join("");
 }
 
 function viewerTab(label) {
@@ -240,6 +291,15 @@ async function runAssertions() {
     // 初期表示は「問題」ページなので解答欄の枠は出ない(rim座標は解答用紙のもの)
     rimCount: qa(".es-rim").length,
     field1: overlayState(),
+    // 切り出しの内部解像度は「ページ画像のピクセル」。rim をそのまま画像座標として
+    // 使っていると、解答用紙が2倍解像度なので半分のサイズになる
+    field1Crop: cropSize(".es-preview-wrap canvas.es-crop"),
+    field1CropPixels: {
+      center: cropPixel(".es-preview-wrap canvas.es-crop", 0.5, 0.5),     // 解答欄1の塗り色のはず
+      margin: cropPixel(".es-preview-wrap canvas.es-crop", 0.004, 0.05),  // cut_margin の外側 = 用紙の地色
+    },
+    // 問題ページは解答用紙とさらに別解像度。各画像の naturalWidth で換算されているはず
+    questionCrop: cropSize(".es-crop-question"),
     // 解答欄プレビューの横に置く問題プレビュー(目安の切り出し)はPC幅だけで見えるはず
     questionPreviewDisplay: getComputedStyle(q(".es-question-preview")).display,
     questionPreviewCanvasWidth: (() => {
@@ -283,6 +343,9 @@ async function runAssertions() {
     editorName: (q(".es-editor-name").textContent || "").trim(),
     activeChipIndex: qa(".es-strip-chip").findIndex((c) => c.classList.contains("active")),
     dataMode: form.dataset.mode,
+    // 設問3は用紙の左端に接する解答欄。切り出しが用紙の外へ出ないかを見る
+    field3Crop: cropSize(".es-preview-wrap canvas.es-crop"),
+    field3CenterPixel: cropPixel(".es-preview-wrap canvas.es-crop", 0.5, 0.5),
   };
 
   // --- ResizeObserver: 幅を変えたら再計算されるか / ping-pong しないか ---

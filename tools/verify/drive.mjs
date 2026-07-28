@@ -192,6 +192,42 @@ function assertAll(label, r) {
   check(`${label}: 「次の未入力へ」で未入力の設問に移る`,
     s.nextEmpty.textareaValue === "", s.nextEmpty);
 
+  // --- 切り出しプレビューの座標換算 ---
+  // rim / cut_margin は base_sheet(1000x1400)の座標系。ハーネスのページ画像は
+  // 解答用紙が2.0倍・問題が1.5倍にしてある。ここを換算せずに rim をそのまま画像ピクセルと
+  // して扱うと、切り出し範囲が縮んで実物と合わなくなる(実機で出た不具合)。
+  // 解答欄1 rim[40,400,920,120] + cut_margin 20
+  //   → base_sheet座標で (20,380)-(980,540) = 960x160 → 画像ピクセルで 1920x320
+  check(`${label}: 切り出しをページ画像の解像度に換算する`,
+    s.initial.field1Crop?.intrinsicWidth === 1920 && s.initial.field1Crop?.intrinsicHeight === 320,
+    s.initial.field1Crop);
+  // 内部解像度が合っていても切り出し位置がズレている可能性があるので、画素で確かめる
+  check(`${label}: 切り出した範囲が実際の解答欄と一致する`,
+    s.initial.field1CropPixels?.center === "#ffe3e3" &&
+    s.initial.field1CropPixels?.margin === "#fffdf5",
+    s.initial.field1CropPixels);
+  // 用紙の左端に接する解答欄3 rim[0,800,960,120]: 左は0でクランプ、右は980まで
+  //   → 980x160 → 画像ピクセルで 1960x320
+  check(`${label}: 用紙端の解答欄で切り出しが用紙の外へはみ出さない`,
+    s.stripNav.field3Crop?.intrinsicWidth === 1960 && s.stripNav.field3Crop?.intrinsicHeight === 320,
+    s.stripNav.field3Crop);
+  check(`${label}: 用紙端でも解答欄が切り出しに収まる`,
+    s.stripNav.field3CenterPixel === "#e3e9ff", s.stripNav.field3CenterPixel);
+  // 問題ページは解答用紙とさらに別解像度(1.5倍)。画像ごとの naturalWidth で換算すること
+  check(`${label}: 問題プレビューは問題ページ自身の解像度で切り出す`,
+    s.initial.questionCrop?.intrinsicWidth === 1440 && s.initial.questionCrop?.intrinsicHeight === 240,
+    s.initial.questionCrop);
+  // 文字は解答欄の中央に置かれる。フォント実測値に依存しないので環境差で揺れない
+  {
+    const shown = s.initial.twoPaneMediaQuery ? s.initial.field1 : s.afterRimTap.field1;
+    check(`${label}: プレビューの文字が解答欄の中央に置かれる`,
+      !!shown && shown.centerX != null &&
+      Math.abs(shown.centerX - shown.renderedWidth / 2) < 1.5 &&
+      Math.abs(shown.centerY - shown.renderedHeight / 2) < 1.5,
+      shown && { centerX: shown.centerX, centerY: shown.centerY,
+                 w: shown.renderedWidth, h: shown.renderedHeight });
+  }
+
   // --- プレビュー描画 ---
   check(`${label}: 幅変更でスケールが再計算される`, s.resize.rescaledCorrectly === true,
     { png: [s.resize.pngWidthBefore, s.resize.pngWidthAfterShrink, s.resize.pngWidthAfterRestore] });

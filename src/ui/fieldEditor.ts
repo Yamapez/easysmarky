@@ -2,7 +2,7 @@ import { Direction } from "../api/types";
 import type { EditableField } from "../model/field";
 import { measureText } from "../render/measure";
 import { renderAnswerText } from "../render/renderText";
-import { drawCropPreview, toImageSrc } from "./cropPreview";
+import { drawCropPreview, type CropRect } from "./cropPreview";
 
 export interface FieldEditorOptions {
   field: EditableField;
@@ -11,6 +11,12 @@ export interface FieldEditorOptions {
   /** その設問がある問題ページの画像。PC幅でのみ解答欄プレビューの横に表示する */
   questionPageImage: string | null;
   cutMargin: number;
+  /**
+   * rim の座標系(base_sheet.width / height)。ページ画像の実解像度はこれと
+   * 一致しないことがあるので、切り出しの換算に使う。0 なら換算しない
+   */
+  sheetWidth: number;
+  sheetHeight: number;
   onChange: (field: EditableField) => void;
   /** 問題ビューアをこの設問のページへ送る(編集不可の設問から使う) */
   onShowPage?: (page: number) => void;
@@ -98,10 +104,28 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   previewWrap.appendChild(overlayImg);
   previewRow.appendChild(previewWrap);
 
+  // drawCropPreview が実際に切り出した矩形(base_sheet座標)。オーバーレイのスケールと
+  // 位置は必ずこれを基準に計算する。null の間はまだ描く準備ができていない。
+  let crop: CropRect | null = null;
+
   if (opts.pageImage) {
-    drawCropPreview(cropCanvas, opts.pageImage, field.raw.rim, cutMargin).catch(() => {
-      /* プレビュー画像が読めない場合はテキスト入力のみ提供する */
-    });
+    drawCropPreview({
+      canvas: cropCanvas,
+      pageImage: opts.pageImage,
+      rim: field.raw.rim,
+      cutMargin,
+      sheetWidth: opts.sheetWidth,
+      sheetHeight: opts.sheetHeight,
+    })
+      .then((rect) => {
+        crop = rect;
+        // 切り出しが確定してはじめて正しいスケールが出せる。ここで初回描画を試みる
+        // (非表示中なら updatePreview は何もせず、後で ResizeObserver が呼び直す)
+        window.requestAnimationFrame(updatePreview);
+      })
+      .catch(() => {
+        /* プレビュー画像が読めない場合はテキスト入力のみ提供する */
+      });
   }
 
   // --- 問題プレビュー(解答欄と同じ範囲を問題ページから切り出したもの。PCのみ表示) ---
@@ -119,7 +143,16 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     questionPreview.appendChild(questionCanvas);
     previewRow.appendChild(questionPreview);
 
-    drawCropPreview(questionCanvas, opts.questionPageImage, field.raw.rim, cutMargin).catch(() => {
+    // 問題ページは解答用紙とさらに別の解像度でありうるが、換算は画像ごとの
+    // naturalWidth/Height を見るので個別に正しく効く
+    drawCropPreview({
+      canvas: questionCanvas,
+      pageImage: opts.questionPageImage,
+      rim: field.raw.rim,
+      cutMargin,
+      sheetWidth: opts.sheetWidth,
+      sheetHeight: opts.sheetHeight,
+    }).catch(() => {
       /* 問題ページ側の切り出しが読めない場合は非表示のままにする */
     });
   }
@@ -133,25 +166,32 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   let lastRendered: string | null = null;
 
   function updatePreview(): void {
-    if (!opts.pageImage || !cropCanvas.width) return;
-    // 非表示の間は表示幅が0になり、正しいスケールを出せない。
+    // 切り出しが終わるまでは正しいスケールを出せない(canvas の width 属性は
+    // 既定の 300 が入っているだけなので、それを基準にしてはいけない)。
+    const rect = crop;
+    if (!opts.pageImage || !rect || rect.width <= 0 || rect.height <= 0) return;
+    // 非表示の間は表示サイズが0になり、正しいスケールを出せない。
     // 再表示されたら下の ResizeObserver が呼び直す。
-    const renderedWidth = cropCanvas.getBoundingClientRect().width;
-    if (renderedWidth <= 0) return;
+    const box = cropCanvas.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return;
     const trimmed = field.text.trim();
     if (!trimmed) {
       overlayImg.style.display = "none";
       lastRendered = null;
       return;
     }
-    const scale = renderedWidth / cropCanvas.width;
+    // 「base_sheet(rim)座標 → CSSピクセル」の倍率。cropCanvas の内部解像度は
+    // ページ画像のピクセル数なので、そこからスケールを出してはいけない。
+    const scaleX = box.width / rect.width;
+    const scaleY = box.height / rect.height;
     const key = [
       field.text,
       field.direction,
       field.fontSize,
       field.lineHeight,
       field.color,
-      scale,
+      scaleX,
+      scaleY,
     ].join(" ");
     if (key === lastRendered) return;
 
@@ -166,8 +206,12 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       lastRendered = null;
       return;
     }
-    const x = (field.raw.rim[2] + 2 * cutMargin - size.width) / 2;
-    const y = (field.raw.rim[3] + 2 * cutMargin - size.height) / 2;
+    // 保存時(model/toParam.ts の buildAnswerText)と同じ中央配置の式。あちらの x,y は
+    // 「切り出し原点 (rim − cut_margin) からの相対座標」なので、ここでは用紙の絶対座標に
+    // 直したうえで、実際に切り出した原点(用紙の端ではクランプされる)を引く。
+    const [rimX, rimY, rimW, rimH] = field.raw.rim;
+    const textX = rimX - cutMargin + (rimW + 2 * cutMargin - size.width) / 2;
+    const textY = rimY - cutMargin + (rimH + 2 * cutMargin - size.height) / 2;
     const png = renderAnswerText({
       text: field.text,
       width: size.width,
@@ -178,10 +222,10 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       direction: field.direction,
     });
     overlayImg.src = `data:image/png;base64,${png}`;
-    overlayImg.style.left = `${x * scale}px`;
-    overlayImg.style.top = `${y * scale}px`;
-    overlayImg.style.width = `${size.width * scale}px`;
-    overlayImg.style.height = `${size.height * scale}px`;
+    overlayImg.style.left = `${(textX - rect.x) * scaleX}px`;
+    overlayImg.style.top = `${(textY - rect.y) * scaleY}px`;
+    overlayImg.style.width = `${size.width * scaleX}px`;
+    overlayImg.style.height = `${size.height * scaleY}px`;
     overlayImg.style.display = "block";
     lastRendered = key;
   }
@@ -284,12 +328,8 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     onEdited();
   });
 
-  // 画像読み込み後に初期プレビューを描画
-  if (opts.pageImage) {
-    const img = new Image();
-    img.onload = () => window.requestAnimationFrame(updatePreview);
-    img.src = toImageSrc(opts.pageImage);
-  }
+  // 初期プレビューは上の drawCropPreview().then() が描く。ここは、そちらより先に
+  // レイアウトが落ち着いた場合の保険(切り出し未完了なら updatePreview は何もしない)。
   window.setTimeout(updatePreview, 50);
 
   // 2カラム化・編集モードへの切替・ウィンドウリサイズ・画面回転で表示幅が変わると
