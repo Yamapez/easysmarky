@@ -148,9 +148,12 @@ function assertAll(label, r) {
 
   // --- 解答欄オーバーレイ(rim座標は解答用紙のものなので問題ページには出さない) ---
   check(`${label}: 問題ページには解答欄の枠を出さない`, s.initial.rimCount === 0, s.initial.rimCount);
-  check(`${label}: 解答用紙に設問数ぶんの枠と凡例が出る`,
-    s.answerSheet.rimCount === 3 && s.answerSheet.legendDisplay === "flex",
+  // rim の座標系は base_sheet.correct_image_size。実機に base_sheet.width/height は
+  // 無いので、そこから取ろうとすると枠が1つも出なくなる(実機で実際に起きていた)。
+  check(`${label}: 解答用紙にそのページの設問ぶんの枠と凡例が出る`,
+    s.answerSheet.rimCount === 2 && s.answerSheet.legendDisplay === "flex",
     { rims: s.answerSheet.rimCount, legend: s.answerSheet.legendDisplay });
+  // 1ページ目は用紙 1000x1400。rim[40,400,920,120] → left 4% / width 92%
   check(`${label}: 枠が用紙サイズに対する百分率で置かれる`,
     s.answerSheet.firstRimStyle?.left === "4%" && s.answerSheet.firstRimStyle?.width === "92%",
     s.answerSheet.firstRimStyle);
@@ -196,27 +199,47 @@ function assertAll(label, r) {
   // rim / cut_margin は base_sheet(1000x1400)の座標系。ハーネスのページ画像は
   // 解答用紙が2.0倍・問題が1.5倍にしてある。ここを換算せずに rim をそのまま画像ピクセルと
   // して扱うと、切り出し範囲が縮んで実物と合わなくなる(実機で出た不具合)。
-  // 解答欄1 rim[40,400,920,120] + cut_margin 20
-  //   → base_sheet座標で (20,380)-(980,540) = 960x160 → 画像ピクセルで 1920x320
+  // 解答欄1 rim[40,400,920,120]、余白 = cut_margin 20 + プレビュー用 2mm(200dpi で 16)= 36
+  //   → 用紙座標で (4,364)-(996,556) = 992x192 → 画像ピクセル(2倍)で 1984x384
   check(`${label}: 切り出しをページ画像の解像度に換算する`,
-    s.initial.field1Crop?.intrinsicWidth === 1920 && s.initial.field1Crop?.intrinsicHeight === 320,
+    s.initial.field1Crop?.intrinsicWidth === 1984 && s.initial.field1Crop?.intrinsicHeight === 384,
     s.initial.field1Crop);
   // 内部解像度が合っていても切り出し位置がズレている可能性があるので、画素で確かめる
   check(`${label}: 切り出した範囲が実際の解答欄と一致する`,
     s.initial.field1CropPixels?.center === "#ffe3e3" &&
     s.initial.field1CropPixels?.margin === "#fffdf5",
     s.initial.field1CropPixels);
-  // 用紙の左端に接する解答欄3 rim[0,800,960,120]: 左は0でクランプ、右は980まで
-  //   → 980x160 → 画像ピクセルで 1960x320
-  check(`${label}: 用紙端の解答欄で切り出しが用紙の外へはみ出さない`,
-    s.stripNav.field3Crop?.intrinsicWidth === 1960 && s.stripNav.field3Crop?.intrinsicHeight === 320,
+  // 設問3は2ページ目(用紙 800x1120・解像度1.25倍)の rim[0,800,760,120]、余白 36。
+  // 左は0で、右は用紙幅 800 でクランプ → 796x192 → 画像ピクセル(1.25倍)で 995x240。
+  // ページごとの座標系を使わず1ページ目の 1000x1400 を使い回すと値がズレる。
+  check(`${label}: ページごとの用紙サイズで切り出しを換算する`,
+    s.stripNav.field3Crop?.intrinsicWidth === 995 && s.stripNav.field3Crop?.intrinsicHeight === 240,
     s.stripNav.field3Crop);
   check(`${label}: 用紙端でも解答欄が切り出しに収まる`,
     s.stripNav.field3CenterPixel === "#e3e9ff", s.stripNav.field3CenterPixel);
-  // 問題ページは解答用紙とさらに別解像度(1.5倍)。画像ごとの naturalWidth で換算すること
-  check(`${label}: 問題プレビューは問題ページ自身の解像度で切り出す`,
-    s.initial.questionCrop?.intrinsicWidth === 1440 && s.initial.questionCrop?.intrinsicHeight === 240,
+  // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる。
+  // rim[0,800,760,120] → left 0% / top 71.4285…% / width 95% / height 10.714…%
+  check(`${label}: 設問を選ぶとその設問のページへ送られる`,
+    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 1,
+    { pager: s.stripNav.pagerLabel, rims: s.stripNav.rimCount });
+  check(`${label}: 枠がページごとの用紙サイズで置かれる`,
+    s.stripNav.firstRimStyle?.left === "0%" && s.stripNav.firstRimStyle?.width === "95%",
+    s.stripNav.firstRimStyle);
+  // 問題ページは別の座標系(question_image_size)・別解像度(1.5倍)。
+  //   992x192 → 画像ピクセルで 1488x288
+  check(`${label}: 問題プレビューは問題ページ自身の座標系・解像度で切り出す`,
+    s.initial.questionCrop?.intrinsicWidth === 1488 && s.initial.questionCrop?.intrinsicHeight === 288,
     s.initial.questionCrop);
+  // プレビューは使える幅いっぱいに拡縮される。canvas の内部解像度のまま置くと
+  // 表示が実質1:1になり、解答欄の大きさ次第で桁違いのサイズで出てしまう
+  // (実機で 78x130 の設問と 665x76 の設問が同じペインに同居する)
+  {
+    const shown = s.initial.twoPaneMediaQuery ? s.initial.field1 : s.afterRimTap.field1;
+    check(`${label}: プレビューが使える幅いっぱいに拡縮される`,
+      !!shown && shown.slotWidth > 0 && Math.abs(shown.renderedWidth - shown.slotWidth) <= 2 &&
+      shown.renderedWidth !== shown.intrinsicWidth,
+      shown && { rendered: shown.renderedWidth, slot: shown.slotWidth, intrinsic: shown.intrinsicWidth });
+  }
   // 文字は解答欄の中央に置かれる。フォント実測値に依存しないので環境差で揺れない
   {
     const shown = s.initial.twoPaneMediaQuery ? s.initial.field1 : s.afterRimTap.field1;

@@ -12,11 +12,17 @@ export interface FieldEditorOptions {
   questionPageImage: string | null;
   cutMargin: number;
   /**
-   * rim の座標系(base_sheet.width / height)。ページ画像の実解像度はこれと
-   * 一致しないことがあるので、切り出しの換算に使う。0 なら換算しない
+   * この設問がある解答用紙ページの rim 座標系(base_sheet.correct_image_size 由来)。
+   * ページ画像の実解像度と一致しないことがあるので、切り出しの換算に使う。
+   * 0 なら換算しない(ページ画像のピクセル = rim 座標 とみなす)
    */
   sheetWidth: number;
   sheetHeight: number;
+  /** 同じく問題ページ側(question_image_size 由来)。解答用紙とは別の座標系でありうる */
+  questionSheetWidth: number;
+  questionSheetHeight: number;
+  /** base_sheet.dpi。プレビューに足す余白を実寸(mm)基準で決めるのに使う */
+  sheetDpi?: number;
   onChange: (field: EditableField) => void;
   /** 問題ビューアをこの設問のページへ送る(編集不可の設問から使う) */
   onShowPage?: (page: number) => void;
@@ -86,12 +92,20 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   const previewHead = document.createElement("div");
   previewHead.className = "es-preview-head";
   previewHead.innerHTML =
-    "<span>解答欄プレビュー</span><span class=\"es-preview-note\">保存後の見た目と同じ</span>";
+    "<span>解答欄プレビュー</span><span class=\"es-preview-note\">枠の内側が解答欄</span>";
   el.appendChild(previewHead);
 
   const previewRow = document.createElement("div");
   previewRow.className = "es-preview-row";
   el.appendChild(previewRow);
+
+  // 表示できる幅を測るための枠。**canvas ではなくこれを ResizeObserver で見る。**
+  // canvas の表示幅は updatePreview がこの幅から決めるので、canvas 自身を観測すると
+  // 「測る → 広げる → また発火」の無限ループになる(styles.ts 側で content が
+  // このスロットを押し広げられないようにもしてある)。
+  const previewSlot = document.createElement("div");
+  previewSlot.className = "es-preview-slot";
+  previewRow.appendChild(previewSlot);
 
   const previewWrap = document.createElement("div");
   previewWrap.className = "es-preview-wrap";
@@ -100,13 +114,28 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   const overlayImg = document.createElement("img");
   overlayImg.className = "es-preview-overlay";
   overlayImg.style.display = "none";
+  // 保存される範囲(rim)の境界。余白を広げて見せるぶん、どこまでが解答欄かを示す
+  const rimGuide = document.createElement("div");
+  rimGuide.className = "es-rim-guide";
+  rimGuide.style.display = "none";
   previewWrap.appendChild(cropCanvas);
+  previewWrap.appendChild(rimGuide);
   previewWrap.appendChild(overlayImg);
-  previewRow.appendChild(previewWrap);
+  previewSlot.appendChild(previewWrap);
 
   // drawCropPreview が実際に切り出した矩形(base_sheet座標)。オーバーレイのスケールと
   // 位置は必ずこれを基準に計算する。null の間はまだ描く準備ができていない。
   let crop: CropRect | null = null;
+
+  /**
+   * プレビューだけに足す余白。cut_margin は実機で 200dpi の 20px(約2.5mm)しかなく、
+   * rim と印字された解答欄がわずかにずれているだけで枠の縁が切れて見える。
+   * ズレはスキャンの位置合わせ由来で解答欄の大きさには比例しないので、
+   * 用紙上の実寸(片側2mm)で足す。dpi が分からなければ cut_margin と同じだけ広げる。
+   */
+  const extraPadding = opts.sheetDpi && opts.sheetDpi > 0
+    ? Math.round((opts.sheetDpi / 25.4) * 2)
+    : cutMargin;
 
   if (opts.pageImage) {
     drawCropPreview({
@@ -116,9 +145,20 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       cutMargin,
       sheetWidth: opts.sheetWidth,
       sheetHeight: opts.sheetHeight,
+      extraPadding,
     })
       .then((rect) => {
         crop = rect;
+        // rim の境界は切り出し矩形に対する百分率で置く。表示サイズが変わっても
+        // 追従するので、ここで一度置けばよい。
+        if (rect.width > 0 && rect.height > 0) {
+          const [rx, ry, rw, rh] = field.raw.rim;
+          rimGuide.style.left = `${((rx - rect.x) / rect.width) * 100}%`;
+          rimGuide.style.top = `${((ry - rect.y) / rect.height) * 100}%`;
+          rimGuide.style.width = `${(rw / rect.width) * 100}%`;
+          rimGuide.style.height = `${(rh / rect.height) * 100}%`;
+          rimGuide.style.display = "block";
+        }
         // 切り出しが確定してはじめて正しいスケールが出せる。ここで初回描画を試みる
         // (非表示中なら updatePreview は何もせず、後で ResizeObserver が呼び直す)
         window.requestAnimationFrame(updatePreview);
@@ -150,8 +190,11 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       pageImage: opts.questionPageImage,
       rim: field.raw.rim,
       cutMargin,
-      sheetWidth: opts.sheetWidth,
-      sheetHeight: opts.sheetHeight,
+      sheetWidth: opts.questionSheetWidth,
+      sheetHeight: opts.questionSheetHeight,
+      // 余白は解答用紙の座標系で出した値。問題ページの座標系が別だと厳密には
+      // 実寸が変わるが、これは「目安」表示なので揃えるだけで足りる
+      extraPadding,
     }).catch(() => {
       /* 問題ページ側の切り出しが読めない場合は非表示のままにする */
     });
@@ -172,6 +215,16 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     if (!opts.pageImage || !rect || rect.width <= 0 || rect.height <= 0) return;
     // 非表示の間は表示サイズが0になり、正しいスケールを出せない。
     // 再表示されたら下の ResizeObserver が呼び直す。
+    const avail = previewSlot.getBoundingClientRect().width;
+    if (avail <= 0) return;
+    // 解答欄の大きさは設問ごとに桁違い(実機では 78x130 と 665x76 が同居する)。
+    // canvas の内部解像度のまま置くと表示が実質1:1になり、小さい解答欄は極端に
+    // 小さく出る。使える幅いっぱいに広げ、縦長のものは CSS の max-height で抑える
+    // (縦横比は height:auto と CSS の min/max アルゴリズムが保つ)。
+    // 枠(.es-preview-wrap)の左右ボーダーぶんを引く。引かないと canvas の
+    // max-width:100% に当たって、枠がスロットより2px狭くなる
+    const wrapBorder = previewWrap.offsetWidth - previewWrap.clientWidth;
+    cropCanvas.style.width = `${Math.max(1, avail - wrapBorder)}px`;
     const box = cropCanvas.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return;
     const trimmed = field.text.trim();
@@ -334,8 +387,11 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
 
   // 2カラム化・編集モードへの切替・ウィンドウリサイズ・画面回転で表示幅が変わると
   // オーバーレイ画像の位置がずれるため、幅の変化を見て描き直す。
+  // 観測するのは canvas ではなくスロット(上のコメント参照。canvas を観測すると
+  // updatePreview が canvas を広げるので無限ループになる)。
+  // スマホは入力ペインが display:none で始まるため、初回描画もこの経路に頼っている。
   const resizeObserver = new ResizeObserver(() => updatePreview());
-  resizeObserver.observe(cropCanvas);
+  resizeObserver.observe(previewSlot);
 
   return {
     element: el,

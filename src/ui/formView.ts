@@ -1,6 +1,7 @@
 import { fetchDigitalReport } from "../api/endpoints";
 import type { DigitalReportQuery } from "../api/types";
 import { createEditableField, type EditableField } from "../model/field";
+import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../model/sheetGeometry";
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
 import {
@@ -69,10 +70,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   const cutMargin = report.cut_margin;
   const answerImages = report.base64_answer_images ?? [];
   const questionImages = report.base64_question_images ?? [];
-  // rim の座標系。ページ画像の実解像度とは一致しないことがあるので、枠オーバーレイ
-  // (pageViewer)と切り出しプレビュー(fieldEditor)の両方でこれを基準に換算する
-  const sheetWidth = report.base_sheet?.width ?? 0;
-  const sheetHeight = report.base_sheet?.height ?? 0;
 
   const fields: EditableField[] = (report.base_sheet_fields ?? [])
     .slice()
@@ -217,8 +214,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     answerImages,
     rims: {
       fields: rimFields,
-      sheetWidth,
-      sheetHeight,
+      pageSize: (index) => answerPageSizeByIndex(report.base_sheet, index),
       isFilled: (id) => {
         const f = fieldById.get(id);
         return !!f && isFilledField(f);
@@ -363,13 +359,19 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     editorBody.innerHTML = "";
     const field = focusId != null ? fieldById.get(focusId) : undefined;
     if (!field) return;
+    // rim の座標系は設問のあるページごとに違いうる
+    const answerSize = answerPageSize(report.base_sheet, answerImages, field.raw.page);
+    const questionSize = questionPageSize(report.base_sheet, questionImages, field.raw.page);
     editor = createFieldEditor({
       field,
       pageImage: answerImages[pageArrayIndex(answerImages, field.raw.page)] ?? null,
       questionPageImage: questionImages[pageArrayIndex(questionImages, field.raw.page)] ?? null,
       cutMargin,
-      sheetWidth,
-      sheetHeight,
+      sheetWidth: answerSize?.width ?? 0,
+      sheetHeight: answerSize?.height ?? 0,
+      questionSheetWidth: questionSize?.width ?? 0,
+      questionSheetHeight: questionSize?.height ?? 0,
+      sheetDpi: report.base_sheet?.dpi,
       onChange: (changed) => {
         // エディタは複製を編集するので、変更を元の配列へ書き戻す
         const index = fields.findIndex((f) => f.raw.id === changed.raw.id);

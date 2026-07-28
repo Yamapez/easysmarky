@@ -19,41 +19,52 @@
 // ============================================================
 // ダミーのページ画像
 //
-// 実機の Smarky では、ページ画像の解像度が base_sheet の座標系(SHEET_W×SHEET_H)と
-// 一致するとは限らない。ここをわざと食い違わせておかないと、rim をそのまま画像ピクセルと
-// して扱う実装ミス(= 解答欄プレビューの切り出し範囲がズレる)を検出できない。
-// 描画はすべて base_sheet 座標で書き、ctx.scale() で解像度倍率を掛ける。
+// rim の座標系は base_sheet.correct_image_size(ページごとの [w,h])。
+// 実機ではこれがページ画像の実解像度と一致するが、ハーネスではわざと食い違わせて
+// おく。そうしないと「rim をそのままページ画像のピクセルとして扱う」実装ミスも、
+// 「naturalWidth を rim の座標系だと思い込む」実装ミスも検出できない。
+// 描画はすべて rim の座標系で書き、ctx.scale() で解像度倍率を掛ける。
+//
+// ページごとに用紙サイズも解像度倍率も変えてある(correct_image_size がページ単位で
+// 持つ以上ありうるため。全ページ共通の1組だと思い込む実装をここで落とす)。
 // ============================================================
-const SHEET_W = 1000;
-const SHEET_H = 1400;
-/** 解答用紙画像の解像度倍率。base_sheet 座標 × これ = 画像ピクセル */
-const ANSWER_IMAGE_SCALE = 2;
-/** 問題ページ画像の解像度倍率(解答用紙とも違う値にしておく) */
-const QUESTION_IMAGE_SCALE = 1.5;
 const PAGE_BG_ANSWER = "#fffdf5";
+
+/** 解答用紙ページ。sheet が rim の座標系(= correct_image_size)、scale が画像解像度の倍率 */
+const ANSWER_PAGES = [
+  { sheet: [1000, 1400], scale: 2 },
+  { sheet: [800, 1120], scale: 1.25 },
+];
+/** 問題ページ。解答用紙とも互いとも違う倍率にしておく */
+const QUESTION_PAGES = [
+  { sheet: [1000, 1400], scale: 1.5 },
+  { sheet: [1000, 1400], scale: 1.5 },
+];
 
 // 解答欄の唯一の出所。REPORT の rim も、ページ画像に描く枠も、ここから作る。
 // 塗り色は「切り出した範囲が本当に解答欄と重なっているか」を画素で確かめるための目印。
 const RIMS = [
-  { id: 1, part3: "ア", rim: [40, 400, 920, 120], fill: "#ffe3e3" },
-  { id: 2, part3: "イ", rim: [40, 600, 920, 120], fill: "#e3ffe8" },
-  // 用紙の左端に接する解答欄。cut_margin ぶんが用紙の外へ出るので、
-  // 切り出しのクランプ(src/ui/cropPreview.ts)が効いているかをここで見る。
-  { id: 3, part3: "ウ", rim: [0, 800, 960, 120], fill: "#e3e9ff" },
+  { id: 1, page: 1, part3: "ア", rim: [40, 400, 920, 120], fill: "#ffe3e3" },
+  { id: 2, page: 1, part3: "イ", rim: [40, 600, 920, 120], fill: "#e3ffe8" },
+  // 2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
+  // cut_margin ぶんが用紙の外へ出るので、切り出しのクランプ(src/ui/cropPreview.ts)も
+  // ここで見る。
+  { id: 3, page: 2, part3: "ウ", rim: [0, 800, 760, 120], fill: "#e3e9ff" },
 ];
 
-function makePage(text, lines, bg, scale) {
+function makePage(text, lines, bg, page, rims) {
+  const [sw, sh] = page.sheet;
   const c = document.createElement("canvas");
-  c.width = SHEET_W * scale; c.height = SHEET_H * scale;
+  c.width = sw * page.scale; c.height = sh * page.scale;
   const g = c.getContext("2d");
-  g.scale(scale, scale);
-  g.fillStyle = bg; g.fillRect(0, 0, SHEET_W, SHEET_H);
+  g.scale(page.scale, page.scale);
+  g.fillStyle = bg; g.fillRect(0, 0, sw, sh);
   g.fillStyle = "#111";
   g.font = "bold 34px sans-serif";
   g.fillText(text, 40, 60);
   g.font = "26px sans-serif";
   lines.forEach((l, i) => g.fillText(l, 40, 130 + i * 44));
-  for (const r of RIMS) {
+  for (const r of rims) {
     const [x, y, w, h] = r.rim;
     g.fillStyle = r.fill;
     g.fillRect(x, y, w, h);
@@ -62,6 +73,7 @@ function makePage(text, lines, bg, scale) {
   }
   return c.toDataURL("image/png");
 }
+const rimsOfPage = (p) => RIMS.filter((r) => r.page === p);
 
 const QUESTION_PAGE_1 = makePage("問題 第1回", [
   "問1 次の文章を読んで、下の問いに答えなさい。",
@@ -69,17 +81,21 @@ const QUESTION_PAGE_1 = makePage("問題 第1回", [
   "  地方では過疎化が問題となった。",
   "(1) 高度経済成長期はおよそ何年から何年までか答えなさい。",
   "(2) 過疎化が地域社会に与えた影響を60字以内で述べなさい。",
-], "#ffffff", QUESTION_IMAGE_SCALE);
+], "#ffffff", QUESTION_PAGES[0], rimsOfPage(1));
 
 const QUESTION_PAGE_2 = makePage("問題 第1回(2ページ目)", [
   "問2 次の語句について説明しなさい。",
   "(1) ドーナツ化現象",
   "(2) Uターン現象",
-], "#ffffff", QUESTION_IMAGE_SCALE);
+], "#ffffff", QUESTION_PAGES[1], rimsOfPage(2));
 
 const ANSWER_PAGE_1 = makePage("解答用紙 第1回", [
   "問1(1) 解答欄 ↓",
-], PAGE_BG_ANSWER, ANSWER_IMAGE_SCALE);
+], PAGE_BG_ANSWER, ANSWER_PAGES[0], rimsOfPage(1));
+
+const ANSWER_PAGE_2 = makePage("解答用紙 第1回(2ページ目)", [
+  "問1(3) 解答欄 ↓",
+], PAGE_BG_ANSWER, ANSWER_PAGES[1], rimsOfPage(2));
 
 // ============================================================
 // ダミーAPIレスポンス
@@ -102,9 +118,9 @@ const SHEET_LIST = {
   max_report_count: 1, report_nos: [1], sheet_types: [1],
 };
 
-function field(id, part3, rim, answerTexts) {
+function field(id, page, part3, rim, answerTexts) {
   return {
-    id, page: 1, kind: 0, part1: "問1", part2: "(1)", part3,
+    id, page, kind: 0, part1: "問1", part2: "(1)", part3,
     allot: 5, rim, answer_type: 1,
     answer_texts: answerTexts || [], answer_images: [], base64_canvas: null, choice_texts: [],
   };
@@ -120,12 +136,21 @@ const EXISTING_TEXT = {
   x: null, y: null, width: null, height: null, direction: 1,
 };
 
+// base_sheet は実機が返す形に合わせること。実機に width / height は無く、
+// rim の座標系は correct_image_size(ページごとの [w,h] を並べたフラット配列)から取る。
+// ここに width / height を足すと、実機で枠が出ない不具合を検出できなくなる。
 const REPORT = {
-  base_sheet: { id: 1001, width: SHEET_W, height: SHEET_H, sheet_type: 1 },
+  base_sheet: {
+    id: 1001, sheet_type: 1, dpi: 200,
+    page_count: ANSWER_PAGES.length,
+    question_page_count: QUESTION_PAGES.length,
+    correct_image_size: ANSWER_PAGES.flatMap((p) => p.sheet),
+    question_image_size: QUESTION_PAGES.flatMap((p) => p.sheet),
+  },
   base_sheet_fields: RIMS.map((r, i) =>
-    field(r.id, r.part3, r.rim, i === 0 ? [EXISTING_TEXT] : [])),
+    field(r.id, r.page, r.part3, r.rim, i === 0 ? [EXISTING_TEXT] : [])),
   base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
-  base64_answer_images: [ANSWER_PAGE_1],
+  base64_answer_images: [ANSWER_PAGE_1, ANSWER_PAGE_2],
   message: null, before_student_sheet_id: null, subject_name: "国語総合 第1回",
   cut_margin: 20, scored_user_name: null,
   answer_image_discriptions: [], question_image_discriptions: [],
@@ -212,10 +237,14 @@ function overlayState() {
   const img = wrap.querySelector(".es-preview-overlay");
   if (!canvas || !img) return null;
   const box = canvas.getBoundingClientRect();
+  const slot = wrap.closest(".es-preview-slot");
   const px = (v) => (v ? parseFloat(v) : null);
   return {
     renderedWidth: Math.round(box.width * 100) / 100,
     renderedHeight: Math.round(box.height * 100) / 100,
+    // 表示に使える幅。canvas はこれいっぱいに広がるはず(intrinsic のまま
+    // 置くと解答欄の大きさ次第で表示が桁違いになる)
+    slotWidth: slot ? Math.round(slot.getBoundingClientRect().width * 100) / 100 : null,
     // canvas の内部解像度は「ページ画像のピクセル数」であって base_sheet の座標系ではない
     intrinsicWidth: canvas.width,
     intrinsicHeight: canvas.height,
@@ -311,22 +340,27 @@ async function runAssertions() {
   // --- 解答用紙タブ: 解答欄の枠と凡例が出るか ---
   viewerTab("解答用紙").click();
   await sleep(400);
+  const rimStyle = (i) => {
+    const r = qa(".es-rim")[i];
+    return r ? { left: r.style.left, top: r.style.top, width: r.style.width, height: r.style.height } : null;
+  };
   results.steps.answerSheet = {
     rimCount: qa(".es-rim").length,
     filledRims: qa(".es-rim.filled").length,
     activeRims: qa(".es-rim.active").length,
     legendDisplay: getComputedStyle(q(".es-viewer-legend")).display,
-    firstRimStyle: (() => {
-      const r = qa(".es-rim")[0];
-      return r ? { left: r.style.left, top: r.style.top, width: r.style.width, height: r.style.height } : null;
-    })(),
+    firstRimStyle: rimStyle(0),
+    pagerLabel: (q(".es-viewer-count").textContent || "").trim(),
   };
 
   // --- 最重要: 解答欄をタップ → 入力に入ったときにプレビューが描かれるか ---
   // スマホは入力ペインが display:none で始まるため、描画経路は
   // 「編集モードに入って ResizeObserver が発火する」ときだけになる。
   const probeBeforeTap = probeLog.length;
-  qa(".es-rim")[0].click();
+  // 枠が1つも出ていない場合でも run を最後まで走らせ、どのチェックが落ちたかを
+  // 読めるようにする(枠が出ないこと自体は上の answerSheet のチェックが捕まえる)
+  const firstRim = qa(".es-rim")[0];
+  if (firstRim) firstRim.click();
   await sleep(1200);
   results.steps.afterRimTap = {
     dataMode: form.dataset.mode,
@@ -343,9 +377,14 @@ async function runAssertions() {
     editorName: (q(".es-editor-name").textContent || "").trim(),
     activeChipIndex: qa(".es-strip-chip").findIndex((c) => c.classList.contains("active")),
     dataMode: form.dataset.mode,
-    // 設問3は用紙の左端に接する解答欄。切り出しが用紙の外へ出ないかを見る
+    // 設問3は2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
+    // 切り出しが用紙の外へ出ないか、ページごとの座標系で換算されているかを見る
     field3Crop: cropSize(".es-preview-wrap canvas.es-crop"),
     field3CenterPixel: cropPixel(".es-preview-wrap canvas.es-crop", 0.5, 0.5),
+    // ビューアが2ページ目へ送られ、そのページの用紙サイズで枠が置かれるか
+    pagerLabel: (q(".es-viewer-count").textContent || "").trim(),
+    rimCount: qa(".es-rim").length,
+    firstRimStyle: rimStyle(0),
   };
 
   // --- ResizeObserver: 幅を変えたら再計算されるか / ping-pong しないか ---
@@ -469,7 +508,8 @@ async function runView(mode) {
     await sleep(500);
   }
   if (want === "edit") {
-    qa(".es-rim")[0].click();
+    const rim = qa(".es-rim")[0];
+    if (rim) rim.click(); else qa(".es-strip-chip")[0].click();
   } else {
     const back = visible(".es-editor-back");
     if (back) back.click();

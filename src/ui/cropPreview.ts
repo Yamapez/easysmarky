@@ -19,11 +19,18 @@ export interface CropPreviewOptions {
   rim: [number, number, number, number];
   cutMargin: number;
   /**
-   * rim の座標系のサイズ(base_sheet.width / height)。
+   * rim の座標系のサイズ(base_sheet.correct_image_size 由来)。
    * 0 や未指定なら「ページ画像のピクセル = rim の座標」とみなす。
    */
   sheetWidth?: number;
   sheetHeight?: number;
+  /**
+   * cut_margin の外側にさらに足す余白(rim の座標系)。**プレビュー表示専用**で、
+   * 保存される範囲には影響しない。cut_margin は実機で 200dpi の 20px(約2.5mm)しか
+   * なく、rim と印字された解答欄のわずかなズレで枠の縁が切れて見えるため、
+   * 周囲を少し広く見せて位置関係を判断できるようにする。
+   */
+  extraPadding?: number;
 }
 
 /**
@@ -55,10 +62,11 @@ export function drawCropPreview(opts: CropPreviewOptions): Promise<CropRect> {
       const fy = sheetH > 0 && naturalH > 0 ? naturalH / sheetH : 1;
 
       // 切り出し範囲(base_sheet座標)。用紙の外へ出る分は上下左右それぞれで詰める
-      const left = Math.max(0, rimX - cutMargin);
-      const top = Math.max(0, rimY - cutMargin);
-      const right = sheetW > 0 ? Math.min(sheetW, rimX + rimW + cutMargin) : rimX + rimW + cutMargin;
-      const bottom = sheetH > 0 ? Math.min(sheetH, rimY + rimH + cutMargin) : rimY + rimH + cutMargin;
+      const pad = cutMargin + Math.max(0, opts.extraPadding ?? 0);
+      const left = Math.max(0, rimX - pad);
+      const top = Math.max(0, rimY - pad);
+      const right = sheetW > 0 ? Math.min(sheetW, rimX + rimW + pad) : rimX + rimW + pad;
+      const bottom = sheetH > 0 ? Math.min(sheetH, rimY + rimH + pad) : rimY + rimH + pad;
       const cropW = Math.max(0, right - left);
       const cropH = Math.max(0, bottom - top);
 
