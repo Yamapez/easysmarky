@@ -16,9 +16,11 @@ export interface RimFieldInfo {
 
 export interface RimOptions {
   fields: RimFieldInfo[];
-  /** rim の座標系。base_sheet.width / height */
-  sheetWidth: number;
-  sheetHeight: number;
+  /**
+   * 表示中の解答用紙ページの rim 座標系のサイズ(base_sheet.correct_image_size 由来)。
+   * ページごとに違いうるので添字で引く。取れなければ null = 枠を出さない。
+   */
+  pageSize: (index: number) => { width: number; height: number } | null;
   isFilled: (fieldId: number) => boolean;
   onSelect: (fieldId: number) => void;
 }
@@ -181,21 +183,17 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     return source === "question" ? questionImages : answerImages;
   }
 
-  /** いま枠を描いてよいか(解答用紙を表示していて、座標系が分かっているとき) */
-  function rimsVisible(): boolean {
-    return (
-      !!rims &&
-      source === "answer" &&
-      answerImages.length > 0 &&
-      rims.sheetWidth > 0 &&
-      rims.sheetHeight > 0
-    );
+  /** いま枠を描いてよいか(解答用紙を表示していて、そのページの座標系が分かっているとき) */
+  function currentSheetSize(): { width: number; height: number } | null {
+    if (!rims || source !== "answer" || answerImages.length === 0) return null;
+    return rims.pageSize(index);
   }
 
   function renderRims(): void {
     rimEls.clear();
     rimLayer.innerHTML = "";
-    if (!rims || !rimsVisible()) {
+    const sheet = currentSheetSize();
+    if (!rims || !sheet) {
       rimLayer.style.display = "none";
       legend.style.display = "none";
       return;
@@ -211,10 +209,10 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
       box.className = "es-rim";
       box.dataset.fieldId = String(field.id);
       // ズーム段階が変わっても追従するよう、用紙サイズに対する百分率で置く
-      box.style.left = `${(x / rims.sheetWidth) * 100}%`;
-      box.style.top = `${(y / rims.sheetHeight) * 100}%`;
-      box.style.width = `${(w / rims.sheetWidth) * 100}%`;
-      box.style.height = `${(h / rims.sheetHeight) * 100}%`;
+      box.style.left = `${(x / sheet.width) * 100}%`;
+      box.style.top = `${(y / sheet.height) * 100}%`;
+      box.style.width = `${(w / sheet.width) * 100}%`;
+      box.style.height = `${(h / sheet.height) * 100}%`;
 
       const label = document.createElement("span");
       label.className = "es-rim-label";

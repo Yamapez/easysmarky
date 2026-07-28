@@ -381,23 +381,41 @@ export const OVERLAY_STYLES = `
 .es-preview-row {
   display: block;
 }
+/* 表示できる幅を測るための枠。中身(canvas)がこれを押し広げないようにしておくこと。
+   広げられると fieldEditor の ResizeObserver が無限ループする */
+.es-preview-slot {
+  min-width: 0;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
 .es-preview-wrap {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: fit-content;
   max-width: 100%;
-  margin-bottom: 12px;
+  margin: 0 auto;
   border: 1px solid #ccc;
   background: #f5f5f5;
 }
+/* 幅は updatePreview() がスロットの幅から決める。ここでは縦長の解答欄が
+   間延びしないよう上限だけ与える(縦横比は height:auto が保つ) */
 .es-preview-wrap canvas.es-crop {
   display: block;
   max-width: 100%;
   height: auto;
+  max-height: 44vh;
 }
 .es-preview-overlay {
   position: absolute;
   pointer-events: none;
   image-rendering: pixelated;
+}
+/* 保存される範囲(rim)の境界。余白を広げて見せるぶん、どこまでが解答欄かを示す */
+.es-rim-guide {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed #2196c9;
+  box-sizing: border-box;
 }
 /* 問題プレビュー(解答欄の横に置く「目安」の切り出し画像)は、狭い画面では出さない */
 .es-question-preview {
@@ -847,10 +865,11 @@ export const OVERLAY_STYLES = `
     gap: 14px;
     flex-wrap: wrap;
   }
-  .es-preview-wrap { flex: 0 0 auto; margin-bottom: 14px; }
+  /* 幅は basis で決める。中身で伸びると ResizeObserver がループするので min-width:0 必須 */
+  .es-preview-slot { flex: 1 1 58%; min-width: 0; margin-bottom: 14px; }
   .es-question-preview {
     display: block;
-    flex: 1 1 240px;
+    flex: 1 1 30%;
     min-width: 0;
   }
 }
@@ -858,16 +877,13 @@ export const OVERLAY_STYLES = `
 /* ===== スマホ: 入力中は問題ページの該当箇所だけを帯で見せる ===== */
 @media (max-width: 899px) {
   .es-preview-head { display: none; }
-  /* 帯の見た目にするだけで、枠(.es-preview-wrap)は canvas と同じ大きさのままにする。
+  /* 枠(.es-preview-wrap)は canvas と同じ大きさのままにすること。
      ここを width:100% にすると、canvas の左端と枠の左端がずれて
-     オーバーレイ画像(絶対配置)の位置計算が狂う */
-  .es-preview-wrap {
-    display: block;
-    width: fit-content;
-    max-width: 100%;
-    margin: 0 auto 10px;
-  }
-  .es-preview-wrap canvas.es-crop { max-height: 96px; }
+     オーバーレイ画像と rim ガイド(どちらも絶対配置)の位置計算が狂う */
+  .es-preview-slot { margin-bottom: 10px; }
+  /* 入力中は帯として見せる。縦長の解答欄は幅が縮むぶん中身も小さくなるが、
+     テキスト入力に画面を使いたいのでここでは高さを優先する */
+  .es-preview-wrap canvas.es-crop { max-height: 30vh; }
   .es-editor-nav.pc-only { display: none; }
   .es-editor-head .es-editor-name { display: none; }
   .es-editor-title { text-align: right; }

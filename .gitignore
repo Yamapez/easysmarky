@@ -3,3 +3,6 @@ dist/
 
 # 検証スクリプトの出力(スクリーンショット・Chromeプロファイル)
 tools/verify/out/
+
+# macOS が勝手に作るもの
+.DS_Store

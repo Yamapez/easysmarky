@@ -107,12 +107,22 @@ export interface BaseSheetField {
   sheet_field_mark?: boolean;
 }
 
+/**
+ * 実機が返す形に合わせてある。**width / height は存在しない。**
+ * rim の座標系は correct_image_size(ページごとの [w,h] を並べたフラット配列)から取る。
+ * 実機の全レポートで correct_image_size は解答用紙画像の実解像度と一致していたが、
+ * 一致を前提にはせず、切り出しは naturalWidth との比で換算する(src/ui/cropPreview.ts)。
+ */
 export interface BaseSheet {
   id: number;
-  width: number;
-  height: number;
   sheet_type: number;
-  correct_image_size?: [number, number];
+  dpi?: number;
+  page_count?: number;
+  question_page_count?: number;
+  /** 解答用紙ページの座標系。[w1,h1,w2,h2,...](ページ数×2) */
+  correct_image_size?: number[] | null;
+  /** 問題ページ側。実機では question_page_count が常に0で、中身を確認できていない */
+  question_image_size?: number[] | null;
 }
 
 export interface DigitalReportResponse {
