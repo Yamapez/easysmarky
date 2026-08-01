@@ -46,6 +46,9 @@ const QUESTION_PAGES = [
 const RIMS = [
   { id: 1, page: 1, part3: "ア", rim: [40, 400, 920, 120], fill: "#ffe3e3" },
   { id: 2, page: 1, part3: "イ", rim: [40, 600, 920, 120], fill: "#e3ffe8" },
+  // 選択式(answer_type:2)の編集不可設問。幅300/1000のように小さめにして、
+  // 設問へジャンプしたときの自動ズームも一緒に検証できるようにする
+  { id: 4, page: 1, part3: "エ", rim: [40, 780, 300, 100], fill: "#f2e3ff", locked: true },
   // 2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
   // cut_margin ぶんが用紙の外へ出るので、切り出しのクランプ(src/ui/cropPreview.ts)も
   // ここで見る。
@@ -118,10 +121,10 @@ const SHEET_LIST = {
   max_report_count: 1, report_nos: [1], sheet_types: [1],
 };
 
-function field(id, page, part3, rim, answerTexts) {
+function field(id, page, part3, rim, answerTexts, answerType) {
   return {
     id, page, kind: 0, part1: "問1", part2: "(1)", part3,
-    allot: 5, rim, answer_type: 1,
+    allot: 5, rim, answer_type: answerType || 1,
     answer_texts: answerTexts || [], answer_images: [], base64_canvas: null, choice_texts: [],
   };
 }
@@ -148,7 +151,7 @@ const REPORT = {
     question_image_size: QUESTION_PAGES.flatMap((p) => p.sheet),
   },
   base_sheet_fields: RIMS.map((r, i) =>
-    field(r.id, r.page, r.part3, r.rim, i === 0 ? [EXISTING_TEXT] : [])),
+    field(r.id, r.page, r.part3, r.rim, i === 0 ? [EXISTING_TEXT] : [], r.locked ? 2 : 1)),
   base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
   base64_answer_images: [ANSWER_PAGE_1, ANSWER_PAGE_2],
   message: null, before_student_sheet_id: null, subject_name: "国語総合 第1回",
@@ -283,6 +286,20 @@ function viewerTab(label) {
   return qa(".es-viewer-tabs button").find((b) => b.textContent === label) || null;
 }
 
+function zoomBtn(label) {
+  return qa(".es-viewer-zoom button").find((b) => b.textContent === label) || null;
+}
+
+/** 枠の要素が、いま .es-viewer-scroll のビューポート内に完全に収まっているか */
+function rimVisibleInScroll() {
+  const rim = q(".es-rim.active");
+  const scroll = q(".es-viewer-scroll");
+  if (!rim || !scroll) return null;
+  const r = rim.getBoundingClientRect();
+  const s = scroll.getBoundingClientRect();
+  return r.left >= s.left - 1 && r.right <= s.right + 1 && r.top >= s.top - 1 && r.bottom <= s.bottom + 1;
+}
+
 async function openSheet() {
   await waitFor(() => q(".es-list-item"), "sheet list");
   q(".es-list-item").click();
@@ -346,6 +363,7 @@ async function runAssertions() {
   };
   results.steps.answerSheet = {
     rimCount: qa(".es-rim").length,
+    lockedRims: qa(".es-rim.locked").length,
     filledRims: qa(".es-rim.filled").length,
     activeRims: qa(".es-rim.active").length,
     legendDisplay: getComputedStyle(q(".es-viewer-legend")).display,
@@ -370,8 +388,75 @@ async function runAssertions() {
     probeLog: probeLog.slice(),
   };
 
+  // モバイルは rim タップ直後 edit モードでビューアが display:none になっているため、
+  // 以降の「枠の見え方」を測るテストはまず問題ビューアが見える view モードへ戻す
+  const backToView = async (waitMs) => {
+    q(".es-editor-back")?.click();
+    await sleep(waitMs ?? 500);
+  };
+  await backToView(400);
+
+  // --- 現在の枠の強調(選択中の枠だけ目立たせ、他は沈める) ---
+  results.steps.emphasis = {
+    hasActiveClass: q(".es-viewer-rims")?.classList.contains("has-active") ?? null,
+    activeOpacity: (() => {
+      const r = qa(".es-rim.active")[0];
+      return r ? getComputedStyle(r).opacity : null;
+    })(),
+    otherOpacity: (() => {
+      const r = qa(".es-rim:not(.active)")[0];
+      return r ? getComputedStyle(r).opacity : null;
+    })(),
+  };
+
+  // --- ズームは設問を切り替えても保持される(手動ズーム中は自動ズームで上書きしない) ---
+  zoomBtn("＋").click();
+  await sleep(200);
+  results.steps.zoomPersist = { afterZoomIn: q(".es-viewer-canvas").style.width };
+  qa(".es-strip-chip")[1].click(); // イ(同じページの別設問)
+  await sleep(300);
+  await backToView();
+  results.steps.zoomPersist.afterFieldSwitch = q(".es-viewer-canvas").style.width;
+
+  // --- 手動ズームしていなければ、小さい解答欄(エ)へジャンプすると自動でズームする ---
+  zoomBtn("全体").click();
+  await sleep(200);
+  qa(".es-strip-chip")[2].click(); // エ(編集不可・幅の狭い解答欄)
+  await sleep(300);
+  await backToView();
+  results.steps.autoZoom = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    canvasWidth: q(".es-viewer-canvas").style.width,
+    lockedCardShown: !!q(".es-field-locked"),
+  };
+
+  // --- 別ページの設問を選ぶと、その枠が見える位置まで自動でパンする ---
+  zoomBtn("全体").click();
+  await sleep(200);
+  qa(".es-strip-chip")[3].click(); // ウ(2ページ目)
+  await sleep(300);
+  await backToView(700);
+  results.steps.autoPan = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    pagerLabel: (q(".es-viewer-count").textContent || "").trim(),
+    rimVisible: rimVisibleInScroll(),
+  };
+
+  // --- Ctrl+↵ は編集不可の設問(エ)を飛ばす ---
+  qa(".es-strip-chip")[1].click(); // イ
+  await sleep(400);
+  const beforeSkip = (q(".es-editor-name").textContent || "").trim();
+  q("textarea.es-textarea").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
+  );
+  await sleep(400);
+  results.steps.skipLocked = {
+    before: beforeSkip,
+    after: (q(".es-editor-name").textContent || "").trim(),
+  };
+
   // --- 設問ストリップで移動できるか ---
-  qa(".es-strip-chip")[2].click();
+  qa(".es-strip-chip")[3].click();
   await sleep(500);
   results.steps.stripNav = {
     editorName: (q(".es-editor-name").textContent || "").trim(),
@@ -438,6 +523,18 @@ async function runAssertions() {
     textareaValue: q("textarea.es-textarea").value,
   };
 
+  // --- 続けて押すと未入力を辿りきり、先頭へ巻き戻って告知する ---
+  visible(".es-next-btn").click(); // イ → ウ(まだ未入力を発見)
+  await sleep(400);
+  visible(".es-next-btn").click(); // ウ → 全員入力済みの ア を飛ばしてイへ巻き戻る
+  await sleep(400);
+  const toastEl = q(".es-toast");
+  results.steps.nextEmptyWrap = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    toastVisible: toastEl ? toastEl.classList.contains("show") : null,
+    toastText: toastEl ? toastEl.textContent : null,
+  };
+
   // --- 入力 → プレビュー・進捗・ストリップの更新 ---
   const ta = q("textarea.es-textarea");
   ta.value = "都市部へ人口が流出し、地域の担い手が不足した。";
@@ -477,10 +574,46 @@ async function runAssertions() {
   results.steps.save.serverTextsAfterSave =
     REPORT.base_sheet_fields.map((f) => ({ id: f.id, text: (f.answer_texts[0] || {}).text || "" }));
 
+  // --- 保存成功でこの端末のバックアップが消える(summary は残ってよい) ---
+  results.steps.backupAfterSave = {
+    keys: Object.keys(localStorage).filter((k) => k.startsWith("easysmarky:") && !k.includes(":summary:")),
+  };
+
+  // --- 編集を再開すると「保存済み」の表示が消える ---
+  const statusBeforeEdit = (q(".es-save-status").textContent || "").trim();
+  const taAfterSave = q("textarea.es-textarea");
+  taAfterSave.value += "続きの文章。";
+  taAfterSave.dispatchEvent(new Event("input", { bubbles: true }));
+  await sleep(200);
+  results.steps.statusClearOnEdit = {
+    before: statusBeforeEdit,
+    after: (q(".es-save-status").textContent || "").trim(),
+  };
+
   // --- 背景スクロールのロック ---
   results.steps.scrollLock = {
     html: document.documentElement.style.overflow,
     body: document.body.style.overflow,
+  };
+
+  // --- Esc で閉じる(1回目は入力欄からフォーカスを外すだけ、2回目で閉じる) ---
+  // 必ず最後に置く(閉じるとこの先の操作ができなくなるため)
+  const hostEl = document.getElementById("easysmarky-host");
+  const taEsc = q("textarea.es-textarea");
+  taEsc.focus();
+  await sleep(100);
+  const activeIsTextareaBefore = shadow().activeElement === taEsc;
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await sleep(100);
+  const activeIsTextareaAfterFirst = shadow().activeElement === taEsc;
+  const hostVisibleAfterFirst = hostEl.style.display !== "none";
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await sleep(100);
+  results.steps.escClose = {
+    activeIsTextareaBefore,
+    activeIsTextareaAfterFirst,
+    hostVisibleAfterFirst,
+    hostVisibleAfterSecond: hostEl.style.display !== "none",
   };
 
   return results;

@@ -119,6 +119,18 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   work.className = "es-work";
   form.appendChild(work);
 
+  const toast = document.createElement("div");
+  toast.className = "es-toast";
+  toast.setAttribute("aria-live", "polite");
+  work.appendChild(toast);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function announce(text: string): void {
+    if (toastTimer != null) clearTimeout(toastTimer);
+    toast.textContent = text;
+    toast.classList.add("show");
+    toastTimer = setTimeout(() => toast.classList.remove("show"), 2500);
+  }
+
   const questionPane = document.createElement("div");
   questionPane.className = "es-pane-question";
   work.appendChild(questionPane);
@@ -192,6 +204,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   saveBar.appendChild(saveRow);
   const statusEl = document.createElement("div");
   statusEl.className = "es-save-status";
+  statusEl.setAttribute("aria-live", "polite");
   saveBar.appendChild(statusEl);
   const saveNote = document.createElement("div");
   saveNote.className = "es-save-note";
@@ -333,8 +346,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     const position = fields.findIndex((f) => f.raw.id === field.raw.id) + 1;
     nameEl.textContent = fieldLabel(field);
     metaEl.textContent = `設問 ${position} / ${fields.length} ・ ${field.raw.page}ページ`;
-    const first = position <= 1;
-    const last = position >= fields.length;
+    const first = findStepTarget(-1) == null;
+    const last = findStepTarget(1) == null;
     prevBtn.disabled = first;
     mobilePrevBtn.disabled = first;
     nextFieldBtn.disabled = last;
@@ -345,13 +358,19 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   let focusId: number | null = null;
   let editor: FieldEditorHandle | null = null;
 
-  function nextEmptyId(): number | null {
+  /** 次の未入力設問を探す。wrapped は「末尾を越えて先頭側へ戻った」かどうか */
+  function nextEmptyField(): { id: number; wrapped: boolean } | null {
     const start = focusId != null ? fields.findIndex((f) => f.raw.id === focusId) : -1;
     for (let i = 1; i <= fields.length; i++) {
-      const field = fields[(start + i + fields.length) % fields.length];
-      if (isEditable(field) && !isFilledField(field)) return field.raw.id;
+      const idx = (start + i) % fields.length;
+      const field = fields[idx];
+      if (isEditable(field) && !isFilledField(field)) return { id: field.raw.id, wrapped: idx <= start };
     }
     return null;
+  }
+
+  function nextEmptyId(): number | null {
+    return nextEmptyField()?.id ?? null;
   }
 
   function renderEditor(): void {
@@ -383,12 +402,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         strip.refresh();
         viewer.refreshRims();
         persistBackup();
+        // 「保存済み」の表示が居座って誤認させないよう、編集を再開したら消す
+        if (!saving) setSaveStatus("", "");
       },
-      onShowPage: (page) => {
-        viewer.goTo(viewer.currentSource(), pageArrayIndex(
-          viewer.currentSource() === "question" ? questionImages : answerImages,
-          page,
-        ));
+      onShowPage: () => {
+        // 編集不可カードからの「問題を見る」。setMode が該当設問の枠までパン/ズームして見せる
         setMode("view");
       },
     });
@@ -415,18 +433,44 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     }
   }
 
+  /** focusId から delta 方向にある、次に編集できる設問を探す(無ければ null) */
+  function findStepTarget(delta: number): EditableField | null {
+    if (fields.length === 0) return null;
+    const current = focusId != null ? fields.findIndex((f) => f.raw.id === focusId) : -1;
+    for (let next = current + delta; next >= 0 && next < fields.length; next += delta) {
+      if (isEditable(fields[next])) return fields[next];
+    }
+    return null;
+  }
+
   function stepField(delta: number): void {
     if (fields.length === 0) return;
-    const current = focusId != null ? fields.findIndex((f) => f.raw.id === focusId) : -1;
-    const next = Math.min(Math.max(current + delta, 0), fields.length - 1);
-    focusField(fields[next].raw.id, { openEditor: form.dataset.mode === "edit" });
+    const target = findStepTarget(delta);
+    if (target) {
+      focusField(target.raw.id, { openEditor: form.dataset.mode === "edit" });
+      return;
+    }
+    // 編集可能な設問がひとつも無いシートでは、従来どおり全件を歩く
+    if (!fields.some(isEditable)) {
+      const current = focusId != null ? fields.findIndex((f) => f.raw.id === focusId) : -1;
+      const next = Math.min(Math.max(current + delta, 0), fields.length - 1);
+      focusField(fields[next].raw.id, { openEditor: form.dataset.mode === "edit" });
+    }
   }
 
   function setMode(mode: "view" | "edit"): void {
     form.dataset.mode = mode;
+    // スマホでは view 中 .es-pane-question が display:none になり、切替直後は
+    // ビューアの描画・スクロール位置が失われている。復帰時に改めて枠へ寄せ直す
+    if (mode === "view" && focusId != null) {
+      const id = focusId;
+      requestAnimationFrame(() => viewer.showField(id));
+    }
   }
 
   // ---------------------------------------------------------------- お知らせ欄
+  /** 下書き復元バー。保存成功時にサーバー側と揃うので消す */
+  let restoreBarEl: HTMLElement | null = null;
   if (guard.blocked) {
     const warn = document.createElement("div");
     warn.className = "es-warning";
@@ -466,6 +510,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         field.color = entry.color;
       }
       restoreBar.remove();
+      restoreBarEl = null;
       renderEditor();
       refreshProgress();
       strip.refresh();
@@ -474,8 +519,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     discardBtn.addEventListener("click", () => {
       clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
       restoreBar.remove();
+      restoreBarEl = null;
     });
     notices.appendChild(restoreBar);
+    restoreBarEl = restoreBar;
   }
 
   // ---------------------------------------------------------------- 保存
@@ -544,6 +591,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         showSaveNotice(message, result.mismatchedFieldIds);
       } else {
         setSaveStatus("保存済み(サーバーで反映を確認しました)。", "#2e7d32");
+        // サーバー側と揃ったので、この端末のバックアップと復元バーはもう不要
+        clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
+        restoreBarEl?.remove();
+        restoreBarEl = null;
       }
     } catch {
       const message = "予期せぬエラーが発生しました。通信状況をご確認のうえ再度お試しください。";
@@ -569,8 +620,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   mobileNextBtn.addEventListener("click", () => stepField(1));
 
   function goToNextEmpty(): void {
-    const id = nextEmptyId();
-    if (id != null) focusField(id, { openEditor: true });
+    const next = nextEmptyField();
+    if (!next) return;
+    focusField(next.id, { openEditor: true });
+    if (next.wrapped) announce("先頭に戻りました(この先に未入力はありません)");
   }
   nextEmptyBtn.addEventListener("click", goToNextEmpty);
   mobileNextEmptyBtn.addEventListener("click", goToNextEmpty);
@@ -586,7 +639,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     if (event.ctrlKey || event.metaKey) {
       if (event.key === "Enter") {
         event.preventDefault();
-        stepField(1);
+        stepField(event.shiftKey ? -1 : 1);
       } else if (event.key === "s" || event.key === "S") {
         event.preventDefault();
         void runSave();

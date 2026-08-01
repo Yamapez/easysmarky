@@ -281,10 +281,29 @@ export const OVERLAY_STYLES = `
 .es-notices:empty { display: none; }
 .es-notices > * { margin-bottom: 0; }
 .es-work {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+.es-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  background: rgba(40, 44, 48, .92);
+  color: #fff;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+.es-toast.show {
+  opacity: 1;
 }
 .es-pane-question {
   flex: 1 1 auto;
@@ -337,6 +356,16 @@ export const OVERLAY_STYLES = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 左のビューアで選択中の枠・右のプレビューチップと同じ色の目印で「今どこを見ているか」を揃える */
+.es-editor-name::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #2196c9;
+  margin-right: 6px;
+}
 .es-editor-meta {
   font-size: 12px;
   color: #8b959b;
@@ -378,6 +407,17 @@ export const OVERLAY_STYLES = `
   font-size: 11px;
   color: #98a3aa;
 }
+/* 左のビューアで選択中の枠(.es-rim.active)と同じ見た目にして、対応関係を目で追えるようにする */
+.es-preview-chip {
+  display: inline-block;
+  background: #2196c9;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
 .es-preview-row {
   display: block;
 }
@@ -394,7 +434,7 @@ export const OVERLAY_STYLES = `
   width: fit-content;
   max-width: 100%;
   margin: 0 auto;
-  border: 1px solid #ccc;
+  border: 2px solid rgba(33, 150, 201, .55);
   background: #f5f5f5;
 }
 /* 幅は updatePreview() がスロットの幅から決める。ここでは縦長の解答欄が
@@ -780,16 +820,25 @@ export const OVERLAY_STYLES = `
   background: rgba(76, 175, 80, .10);
 }
 .es-rim.active {
+  border-width: 3px;
   border-style: solid;
   border-color: #2196c9;
   background: rgba(33, 150, 201, .16);
-  box-shadow: 0 0 0 4px rgba(33, 150, 201, .22);
+  box-shadow: 0 0 0 4px rgba(33, 150, 201, .28);
+  animation: es-rim-flash .6s ease-out;
 }
 .es-rim.locked {
   border-style: solid;
   border-color: #b9c2c7;
   background: rgba(185, 194, 199, .12);
   cursor: default;
+}
+/* 今どの枠を見ればいいか一目でわかるよう、選択中以外を沈める */
+.es-viewer-rims.has-active .es-rim:not(.active) {
+  opacity: .45;
+}
+@keyframes es-rim-flash {
+  from { box-shadow: 0 0 0 14px rgba(33, 150, 201, .45); }
 }
 .es-rim-label {
   position: absolute;
@@ -867,6 +916,8 @@ export const OVERLAY_STYLES = `
   }
   /* 幅は basis で決める。中身で伸びると ResizeObserver がループするので min-width:0 必須 */
   .es-preview-slot { flex: 1 1 58%; min-width: 0; margin-bottom: 14px; }
+  /* プレビューと入力欄を同時に視界に収め、スクロールしての見比べを減らす */
+  .es-preview-wrap canvas.es-crop { max-height: 36vh; }
   .es-question-preview {
     display: block;
     flex: 1 1 30%;

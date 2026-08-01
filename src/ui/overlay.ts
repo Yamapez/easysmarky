@@ -77,6 +77,8 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
 
     const root = document.createElement("div");
     root.className = "es-root";
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-modal", "true");
 
     const panel = document.createElement("div");
     panel.className = "es-panel";
@@ -161,6 +163,26 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
 
     root.appendChild(panel);
     shadow.appendChild(root);
+
+    // Esc で閉じる。1回目は入力欄からフォーカスを外すだけにして誤爆(入力中に閉じてしまう)を防ぐ
+    window.addEventListener(
+      "keydown",
+      (event: KeyboardEvent) => {
+        if (event.key !== "Escape") return;
+        if (!host || host.style.display === "none") return;
+        // IME確定のキャンセルでも Escape が飛んでくるブラウザがあるため無視する
+        if (event.isComposing || event.keyCode === 229) return;
+        const active = shadow.activeElement;
+        if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) {
+          active.blur();
+          event.preventDefault();
+          return;
+        }
+        setVisible(false);
+        event.preventDefault();
+      },
+      true,
+    );
   }
 
   function setVisible(visible: boolean): void {

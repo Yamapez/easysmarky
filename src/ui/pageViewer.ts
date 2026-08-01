@@ -75,8 +75,13 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
 
   let source: PageSource = questionImages.length > 0 ? "question" : "answer";
   let index = 0;
-  let zoomStep = 0;
+  /** ズーム倍率。1 = ペイン幅にフィット。設問を切り替えても保持する(手動で拡大した状態を壊さない) */
+  let zoomScale = 1;
+  /** ＋/−で拡大したら true。「全体」を押すまで、設問へのジャンプで自動ズームしない */
+  let userZoomed = false;
   let activeFieldId: number | null = null;
+  /** showField() が要求した「まだ見せられていない」設問。画像の読み込み完了後にパンする */
+  let pendingFocusId: number | null = null;
 
   const el = document.createElement("div");
   el.className = "es-viewer";
@@ -101,8 +106,14 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     tabs.appendChild(answerTab);
     bar.appendChild(tabs);
 
-    questionTab.addEventListener("click", () => goTo("question", 0));
-    answerTab.addEventListener("click", () => goTo("answer", 0));
+    questionTab.addEventListener("click", () => {
+      pendingFocusId = null;
+      goTo("question", 0);
+    });
+    answerTab.addEventListener("click", () => {
+      pendingFocusId = null;
+      goTo("answer", 0);
+    });
   }
 
   // --- ページ送り ---
@@ -231,6 +242,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
 
   function paintRims(): void {
     if (!rims) return;
+    rimLayer.classList.toggle("has-active", activeFieldId != null && rimEls.has(activeFieldId));
     for (const field of rims.fields) {
       const box = rimEls.get(field.id);
       if (!box) continue;
@@ -264,10 +276,10 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     countEl.textContent = hasImages ? `${index + 1} / ${images.length}` : "-";
     prevBtn.disabled = !hasImages || index <= 0;
     nextBtn.disabled = !hasImages || index >= images.length - 1;
-    zoomOutBtn.disabled = zoomStep <= 0;
-    zoomInBtn.disabled = zoomStep >= ZOOM_STEPS.length - 1;
+    zoomOutBtn.disabled = zoomScale <= ZOOM_STEPS[0] + 0.01;
+    zoomInBtn.disabled = zoomScale >= ZOOM_STEPS[ZOOM_STEPS.length - 1] - 0.01;
 
-    canvas.style.width = `${ZOOM_STEPS[zoomStep] * 100}%`;
+    canvas.style.width = `${zoomScale * 100}%`;
     if (hasImages) {
       const nextSrc = toImageSrc(images[index]);
       // 同じページの再描画で読み込みが走らないようにする
@@ -281,15 +293,66 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   function goTo(nextSource: PageSource, nextIndex: number): void {
     const images = nextSource === "question" ? questionImages : answerImages;
     if (images.length === 0 && nextSource === "question") return;
+    const clampedIndex = Math.min(Math.max(nextIndex, 0), Math.max(images.length - 1, 0));
+    const pageChanged = nextSource !== source || clampedIndex !== index;
     source = nextSource;
-    index = Math.min(Math.max(nextIndex, 0), Math.max(images.length - 1, 0));
-    zoomStep = 0;
-    scroll.scrollTo(0, 0);
+    index = clampedIndex;
+    // ズームは保持する。ただし showField 経由(pendingFocusId あり)以外でページが変わった
+    // ときは、素のページ送りとして新しいページの頭から読めるようスクロールだけ戻す
+    if (pageChanged && pendingFocusId == null) {
+      scroll.scrollTo(0, 0);
+    }
     render();
   }
 
   function step(delta: number): void {
+    pendingFocusId = null;
     goTo(source, index + delta);
+  }
+
+  /** 画像の実サイズ(＝レイアウト)が確定してから cb を呼ぶ */
+  function whenImageReady(cb: () => void): void {
+    if (img.complete && img.naturalWidth > 0) {
+      requestAnimationFrame(cb);
+    } else {
+      img.addEventListener("load", () => requestAnimationFrame(cb), { once: true });
+    }
+  }
+
+  /** pendingFocusId の設問へ、必要なら自動ズームしたうえで枠が読める位置までパンする */
+  function focusActiveRim(): void {
+    const fieldId = pendingFocusId;
+    if (fieldId == null) return;
+    // 消費したら即座にクリアする。積み残った load リスナーからの二重呼び出しを無害化し、
+    // 後続のページ送り(step/タブ)が普段どおりスクロールを先頭に戻せるようにする
+    pendingFocusId = null;
+    const field = rims?.fields.find((f) => f.id === fieldId);
+    const sheet = currentSheetSize();
+    if (!field || !sheet) return;
+    const vw = scroll.clientWidth;
+    const vh = scroll.clientHeight;
+    // スマホの入力モードなどビューアが display:none のときは何もしない(戻ってきたときに再度呼ばれる)
+    if (vw === 0 || vh === 0) return;
+
+    if (!userZoomed) {
+      const rimWidthFrac = field.rim[2] / sheet.width;
+      const contextFrac = Math.min(1, rimWidthFrac + 0.3);
+      const nextScale = Math.min(3, Math.max(1, 1 / contextFrac));
+      if (Math.abs(nextScale - zoomScale) > 0.01) {
+        zoomScale = nextScale;
+        render();
+      }
+    }
+
+    requestAnimationFrame(() => {
+      const box = rimEls.get(fieldId);
+      if (!box) return;
+      scroll.scrollTo({
+        left: box.offsetLeft + box.offsetWidth / 2 - vw / 2,
+        // 上端をやや上寄りに置く。枠の直前にある設問文が視界に入るように
+        top: box.offsetTop - vh * 0.35,
+      });
+    });
   }
 
   function showField(fieldId: number): void {
@@ -297,9 +360,11 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     const field = rims?.fields.find((f) => f.id === fieldId);
     const images = currentImages();
     if (!field || images.length === 0) {
+      pendingFocusId = null;
       paintRims();
       return;
     }
+    pendingFocusId = fieldId;
     // 種別(問題/解答用紙)は変えない。読んでいる途中で勝手に切り替わらないようにする
     const wanted = pageArrayIndex(images, field.page);
     if (index !== wanted) {
@@ -307,22 +372,30 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     } else {
       paintRims();
     }
-    // 拡大中でも選択した枠が見えるように寄せる
-    rimEls.get(fieldId)?.scrollIntoView({ block: "center", inline: "center" });
+    whenImageReady(focusActiveRim);
   }
 
-  prevBtn.addEventListener("click", () => goTo(source, index - 1));
-  nextBtn.addEventListener("click", () => goTo(source, index + 1));
+  prevBtn.addEventListener("click", () => {
+    pendingFocusId = null;
+    goTo(source, index - 1);
+  });
+  nextBtn.addEventListener("click", () => {
+    pendingFocusId = null;
+    goTo(source, index + 1);
+  });
   zoomInBtn.addEventListener("click", () => {
-    zoomStep = Math.min(zoomStep + 1, ZOOM_STEPS.length - 1);
+    userZoomed = true;
+    zoomScale = ZOOM_STEPS.find((s) => s > zoomScale + 0.01) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
     render();
   });
   zoomOutBtn.addEventListener("click", () => {
-    zoomStep = Math.max(zoomStep - 1, 0);
+    userZoomed = true;
+    zoomScale = [...ZOOM_STEPS].reverse().find((s) => s < zoomScale - 0.01) ?? ZOOM_STEPS[0];
     render();
   });
   zoomFitBtn.addEventListener("click", () => {
-    zoomStep = 0;
+    zoomScale = 1;
+    userZoomed = false;
     scroll.scrollTo(0, 0);
     render();
   });

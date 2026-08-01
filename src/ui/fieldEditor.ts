@@ -91,8 +91,17 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   // --- 解答欄プレビュー(切り抜き画像 + 描画されるテキストの重ね合わせ) ---
   const previewHead = document.createElement("div");
   previewHead.className = "es-preview-head";
-  previewHead.innerHTML =
-    "<span>解答欄プレビュー</span><span class=\"es-preview-note\">枠の内側が解答欄</span>";
+  const previewChip = document.createElement("span");
+  previewChip.className = "es-preview-chip";
+  previewChip.textContent = fieldShortLabel(field);
+  const previewLabel = document.createElement("span");
+  previewLabel.textContent = "の解答欄";
+  const previewNote = document.createElement("span");
+  previewNote.className = "es-preview-note";
+  previewNote.textContent = "枠の内側が解答欄";
+  previewHead.appendChild(previewChip);
+  previewHead.appendChild(previewLabel);
+  previewHead.appendChild(previewNote);
   el.appendChild(previewHead);
 
   const previewRow = document.createElement("div");
@@ -328,8 +337,10 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   hints.className = "es-key-hints";
   hints.innerHTML =
     "<span><kbd>Ctrl</kbd>+<kbd>↵</kbd>次の設問</span>" +
+    "<span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↵</kbd>前の設問</span>" +
     "<span><kbd>Alt</kbd>+<kbd>↑↓</kbd>ページ送り</span>" +
-    "<span><kbd>Ctrl</kbd>+<kbd>S</kbd>下書き保存</span>";
+    "<span><kbd>Ctrl</kbd>+<kbd>S</kbd>下書き保存</span>" +
+    "<span><kbd>Esc</kbd>閉じる</span>";
   el.appendChild(hints);
 
   function refreshToggle(): void {

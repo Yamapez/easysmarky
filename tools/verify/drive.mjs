@@ -142,7 +142,8 @@ function assertAll(label, r) {
   const s = r.steps;
 
   // --- 1設問集中レイアウトの骨格 ---
-  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 3, s.initial.stripChips);
+  // 設問は ア・イ・エ(編集不可)・ウ の4件(page→id順。エは選択式で編集不可)
+  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 4, s.initial.stripChips);
   check(`${label}: 最初の設問が開いている`, s.initial.editorName.includes("問1"), s.initial.editorName);
   check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 1/3", s.initial.progress);
 
@@ -150,9 +151,12 @@ function assertAll(label, r) {
   check(`${label}: 問題ページには解答欄の枠を出さない`, s.initial.rimCount === 0, s.initial.rimCount);
   // rim の座標系は base_sheet.correct_image_size。実機に base_sheet.width/height は
   // 無いので、そこから取ろうとすると枠が1つも出なくなる(実機で実際に起きていた)。
+  // 1ページ目の設問はア・イ・エ(編集不可)の3件
   check(`${label}: 解答用紙にそのページの設問ぶんの枠と凡例が出る`,
-    s.answerSheet.rimCount === 2 && s.answerSheet.legendDisplay === "flex",
+    s.answerSheet.rimCount === 3 && s.answerSheet.legendDisplay === "flex",
     { rims: s.answerSheet.rimCount, legend: s.answerSheet.legendDisplay });
+  check(`${label}: 編集不可の設問は枠もロック表示になる`,
+    s.answerSheet.lockedRims === 1, s.answerSheet.lockedRims);
   // 1ページ目は用紙 1000x1400。rim[40,400,920,120] → left 4% / width 92%
   check(`${label}: 枠が用紙サイズに対する百分率で置かれる`,
     s.answerSheet.firstRimStyle?.left === "4%" && s.answerSheet.firstRimStyle?.width === "92%",
@@ -189,9 +193,37 @@ function assertAll(label, r) {
       s.afterRimTap);
   }
 
+  // --- 現在の枠の強調(選択中だけ目立たせ、他は沈める) ---
+  check(`${label}: 選択中の枠が強調され、他の枠は沈む`,
+    s.emphasis.hasActiveClass === true &&
+    parseFloat(s.emphasis.activeOpacity) >= 0.99 &&
+    parseFloat(s.emphasis.otherOpacity) < 0.9,
+    s.emphasis);
+
+  // --- ズームは設問を切り替えても保持される ---
+  check(`${label}: 手動でズームすると設問を切り替えても保持される`,
+    s.zoomPersist.afterZoomIn === "150%" && s.zoomPersist.afterFieldSwitch === s.zoomPersist.afterZoomIn,
+    s.zoomPersist);
+
+  // --- 手動ズームしていなければ、小さい解答欄へは自動でズームする ---
+  check(`${label}: 手動ズームなしで小さい解答欄を選ぶと自動でズームする`,
+    parseFloat(s.autoZoom.canvasWidth) > 155 && parseFloat(s.autoZoom.canvasWidth) < 175 &&
+    s.autoZoom.lockedCardShown === true,
+    s.autoZoom);
+
+  // --- 別ページの設問を選ぶと、その枠が見える位置まで自動でパンする ---
+  check(`${label}: 設問を選ぶとその枠が視界に入るまで自動でパンする`,
+    s.autoPan.pagerLabel === "2 / 2" && s.autoPan.rimVisible === true, s.autoPan);
+
+  // --- Ctrl+↵ は編集不可の設問を飛ばす ---
+  check(`${label}: Ctrl+↵ は編集不可の設問(エ)を飛ばす`,
+    s.skipLocked.before.includes("イ") && s.skipLocked.after.includes("ウ") &&
+    s.skipLocked.after !== s.skipLocked.before,
+    s.skipLocked);
+
   // --- 設問の移動 ---
   check(`${label}: ストリップで設問を移動できる`,
-    s.stripNav.activeChipIndex === 2 && s.stripNav.editorName.includes("ウ"), s.stripNav);
+    s.stripNav.activeChipIndex === 3 && s.stripNav.editorName.includes("ウ"), s.stripNav);
   check(`${label}: 「次の未入力へ」で未入力の設問に移る`,
     s.nextEmpty.textareaValue === "", s.nextEmpty);
 
@@ -233,10 +265,11 @@ function assertAll(label, r) {
   // プレビューは使える幅いっぱいに拡縮される。canvas の内部解像度のまま置くと
   // 表示が実質1:1になり、解答欄の大きさ次第で桁違いのサイズで出てしまう
   // (実機で 78x130 の設問と 665x76 の設問が同じペインに同居する)
+  // 差の許容値は .es-preview-wrap の左右ボーダー(2px×2辺=4px)ぶん
   {
     const shown = s.initial.twoPaneMediaQuery ? s.initial.field1 : s.afterRimTap.field1;
     check(`${label}: プレビューが使える幅いっぱいに拡縮される`,
-      !!shown && shown.slotWidth > 0 && Math.abs(shown.renderedWidth - shown.slotWidth) <= 2 &&
+      !!shown && shown.slotWidth > 0 && Math.abs(shown.renderedWidth - shown.slotWidth) <= 5 &&
       shown.renderedWidth !== shown.intrinsicWidth,
       shown && { rendered: shown.renderedWidth, slot: shown.slotWidth, intrinsic: shown.intrinsicWidth });
   }
@@ -266,11 +299,32 @@ function assertAll(label, r) {
   check(`${label}: Ctrl+↵ で次の設問に移る`,
     s.shortcut.after !== s.shortcut.before && s.shortcut.after.length > 0, s.shortcut);
 
+  // --- 「次の未入力へ」を辿りきると先頭へ巻き戻り、告知する ---
+  check(`${label}: 未入力を辿りきると巻き戻ってトーストで告知する`,
+    s.nextEmptyWrap.editorName.includes("イ") &&
+    s.nextEmptyWrap.toastVisible === true &&
+    (s.nextEmptyWrap.toastText || "").includes("戻"),
+    s.nextEmptyWrap);
+
   // --- 保存 ---
   check(`${label}: 下書き保存が再取得照合まで通る`,
     s.save.postCount === 1 && s.save.status.includes("反映を確認"), s.save.status);
+  check(`${label}: 保存成功でこの端末の下書きバックアップが消える`,
+    Array.isArray(s.backupAfterSave.keys) && s.backupAfterSave.keys.length === 0,
+    s.backupAfterSave);
+  check(`${label}: 編集を再開すると「保存済み」の表示が消える`,
+    s.statusClearOnEdit.before.length > 0 && s.statusClearOnEdit.after === "",
+    s.statusClearOnEdit);
   check(`${label}: 背景ページのスクロールがロックされる`,
     s.scrollLock.html === "hidden" && s.scrollLock.body === "hidden", s.scrollLock);
+
+  // --- Esc で閉じる(1回目はフォーカス解除だけ、2回目で閉じる) ---
+  check(`${label}: Esc の1回目は入力欄からフォーカスを外すだけ`,
+    s.escClose.activeIsTextareaBefore === true && s.escClose.activeIsTextareaAfterFirst === false &&
+    s.escClose.hostVisibleAfterFirst === true,
+    s.escClose);
+  check(`${label}: Esc の2回目でオーバーレイを閉じる`,
+    s.escClose.hostVisibleAfterSecond === false, s.escClose);
 }
 
 // ---------------------------------------------------------------- 実行
