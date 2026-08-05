@@ -18,6 +18,14 @@ declare global {
 
 const LAUNCHER_ID = "easysmarky-launcher";
 
+/**
+ * URLの末尾に付いていたら起動する目印(`https://digi-repo.smarky.jp/...#easysmarky`)。
+ * ホーム画面のショートカットやSafariのお気に入りに登録しておけば、
+ * 「Smarkyを開く → ボタンを探してタップ」が1タップで済む。
+ * ハッシュにしたのはサーバへ送られずSmarky側の画面遷移に影響しないため。
+ */
+const AUTOSTART_HASH = "easysmarky";
+
 function launch(): void {
   window.__easysmarky = createOverlay({ canOpenInNewTab: true });
   window.__easysmarky.start();
@@ -37,6 +45,40 @@ function consumeAutostartFlag(): boolean {
   } catch {
     return false;
   }
+}
+
+function hasAutostartHash(): boolean {
+  return location.hash.replace(/^#/, "").toLowerCase() === AUTOSTART_HASH;
+}
+
+/**
+ * 目印を消してから起動する。残したままだと、閉じたあとに再読み込み(引っ張って更新など)
+ * しただけで勝手に開き直してしまう。ショートカット側のURLには目印が残るので、
+ * 次にアイコンから開いたときはまた自動で起動する。
+ */
+function consumeAutostartHash(): boolean {
+  if (!hasAutostartHash()) return false;
+  try {
+    history.replaceState(null, "", location.pathname + location.search);
+  } catch {
+    // replaceState が使えなくても起動自体はできるので握りつぶす
+  }
+  return true;
+}
+
+/**
+ * 同じページを開いたままアドレスバーで `#easysmarky` を付けた場合は再読み込みが起きず
+ * hashchange だけが飛ぶ。ブックマークからの起動をこの経路に頼るブラウザがあるため拾う。
+ */
+function watchAutostartHash(): void {
+  window.addEventListener("hashchange", () => {
+    if (!consumeAutostartHash()) return;
+    if (!window.__easysmarky) {
+      launch();
+      return;
+    }
+    window.__easysmarky.toggle();
+  });
 }
 
 function addLauncher(): void {
@@ -83,7 +125,8 @@ async function runUpdateCheck(): Promise<void> {
 }
 
 addLauncher();
+watchAutostartHash();
 
-if (consumeAutostartFlag()) launch();
+if (consumeAutostartHash() || consumeAutostartFlag()) launch();
 
 void runUpdateCheck();
