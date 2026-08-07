@@ -53,6 +53,13 @@ const RIMS = [
   // cut_margin ぶんが用紙の外へ出るので、切り出しのクランプ(src/ui/cropPreview.ts)も
   // ここで見る。
   { id: 3, page: 2, part3: "ウ", rim: [0, 800, 760, 120], fill: "#e3e9ff" },
+  // 縦長の解答欄(実機の「1文字だけ書く縦書きの解答欄」に相当)。
+  // これが無いと canvas の max-height 上限が当たる経路を一度も通らず、
+  // 「幅だけ指定して height:auto に任せる」= 高さだけ潰れて横に伸びる不具合
+  // (v0.8.0)を検出できない。他の解答欄はすべて横長で、幅で先に頭打ちになる。
+  // 用紙 800x1120・余白36 → 切り出し 172x332 → 画像ピクセル(1.25倍)で 215x415。
+  // 1ページ目に置くと設問ストリップの添字がずれて既存の検査を巻き込むので2ページ目。
+  { id: 5, page: 2, part3: "オ", rim: [620, 300, 100, 260], fill: "#ffefc2" },
 ];
 
 function makePage(text, lines, bg, page, rims) {
@@ -139,6 +146,16 @@ const EXISTING_TEXT = {
   x: null, y: null, width: null, height: null, direction: 1,
 };
 
+// 縦長の設問オも入力済みにしておく。空だと「次の未入力へ」がここで止まってしまい、
+// 末尾から先頭へ巻き戻る検査(nextEmptyWrap)が成立しない。
+// 縦書き(direction:2)にして、実機の1文字解答欄と同じ経路を通す。
+const EXISTING_TALL_TEXT = {
+  id: 12, base_sheet_field_id: 5, idx: 0,
+  text: "ア", color: "#000000",
+  font_size: 40, line_height: 1.2,
+  x: null, y: null, width: null, height: null, direction: 2,
+};
+
 // base_sheet は実機が返す形に合わせること。実機に width / height は無く、
 // rim の座標系は correct_image_size(ページごとの [w,h] を並べたフラット配列)から取る。
 // ここに width / height を足すと、実機で枠が出ない不具合を検出できなくなる。
@@ -150,8 +167,10 @@ const REPORT = {
     correct_image_size: ANSWER_PAGES.flatMap((p) => p.sheet),
     question_image_size: QUESTION_PAGES.flatMap((p) => p.sheet),
   },
-  base_sheet_fields: RIMS.map((r, i) =>
-    field(r.id, r.page, r.part3, r.rim, i === 0 ? [EXISTING_TEXT] : [], r.locked ? 2 : 1)),
+  base_sheet_fields: RIMS.map((r) =>
+    field(r.id, r.page, r.part3, r.rim,
+          r.id === 1 ? [EXISTING_TEXT] : r.id === 5 ? [EXISTING_TALL_TEXT] : [],
+          r.locked ? 2 : 1)),
   base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
   base64_answer_images: [ANSWER_PAGE_1, ANSWER_PAGE_2],
   message: null, before_student_sheet_id: null, subject_name: "国語総合 第1回",
@@ -259,6 +278,15 @@ function overlayState() {
     centerY: px(img.style.top) != null ? px(img.style.top) + px(img.style.height) / 2 : null,
     // updatePreview が使うスケールと、実際に当たっている幅の比が一致するか照合する材料
     scale: canvas.width ? Math.round((box.width / canvas.width) * 10000) / 10000 : null,
+    // 表示は canvas の内部解像度の縦横比を必ず保つはず。幅だけ指定して
+    // height:auto に任せると max-height が当たったとき高さだけ潰れてここが食い違う
+    intrinsicRatio: canvas.height ? Math.round((canvas.width / canvas.height) * 10000) / 10000 : null,
+    renderedRatio: box.height ? Math.round((box.width / box.height) * 10000) / 10000 : null,
+    // updatePreview が読むのと同じ「いま効いている高さの上限」
+    maxHeightPx: (() => {
+      const v = getComputedStyle(canvas).maxHeight;
+      return v && v.endsWith("px") ? parseFloat(v) : null;
+    })(),
   };
 }
 
@@ -448,6 +476,18 @@ async function runAssertions() {
     firstRimStyle: rimStyle(0),
   };
 
+  // --- 縦長の解答欄: 高さの上限が当たっても縦横比が崩れないか ---
+  // 設問オ(2ページ目・rim 100x260)は他と違って縦長なので、ここだけが
+  // canvas の max-height に当たる経路を通る。横長の設問では幅で先に頭打ちになる。
+  qa(".es-strip-chip")[4].click();
+  await sleep(700);
+  results.steps.tallField = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    field: overlayState(),
+    crop: cropSize(".es-preview-wrap canvas.es-crop"),
+    centerPixel: cropPixel(".es-preview-wrap canvas.es-crop", 0.5, 0.5),
+  };
+
   // --- ResizeObserver: 幅を変えたら再計算されるか / ping-pong しないか ---
   // (既存テキストのある設問1に戻してから測る)
   qa(".es-strip-chip")[0].click();
@@ -619,6 +659,11 @@ async function runView(mode) {
     // 「その設問を選んでテキストエリアにフォーカスする」だけの意味になる
     const rim = qa(".es-rim")[0];
     if (rim) rim.click(); else qa(".es-strip-chip")[0].click();
+  }
+  if (want === "tall") {
+    // 縦長の解答欄(設問オ)。canvas の max-height が当たる唯一の設問なので、
+    // 「高さで頭打ちにしたぶん幅も縮んで縦横比が保たれている」ことを目視できる1枚
+    qa(".es-strip-chip")[4].click();
   }
   await sleep(900);
   return { mode: "view", view: want };

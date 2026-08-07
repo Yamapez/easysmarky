@@ -422,13 +422,18 @@ export const OVERLAY_STYLES = `
   border: 2px solid rgba(33, 150, 201, .55);
   background: #f5f5f5;
 }
-/* 幅は updatePreview() がスロットの幅から決める。ここでは縦長の解答欄が
-   間延びしないよう上限だけ与える(縦横比は height:auto が保つ) */
+/* 幅も高さも updatePreview()(src/ui/fieldEditor.ts)が JS で決める。
+   CSS に幅だけ指定して height:auto に任せると、max-height が当たったときに
+   高さだけ潰れて横に伸びる(CSS の縦横比保持は width/height が両方 auto の
+   ときだけ効く)。ここの max-height は「高さの上限」の唯一の出所で、
+   fieldEditor が getComputedStyle().maxHeight で読む。必ず px / vh / min() など
+   **絶対長に解決される値**で書くこと(% は読めず「上限なし」になる)。
+   下の宣言は JS が走る前と読み取り失敗時の保険を兼ねる */
 .es-preview-wrap canvas.es-crop {
   display: block;
   max-width: 100%;
   height: auto;
-  max-height: 44vh;
+  max-height: 44vh; /* どのブレークポイントにも当たらない既定値(下の2つが上書きする) */
 }
 .es-preview-overlay {
   position: absolute;
@@ -809,11 +814,13 @@ export const OVERLAY_STYLES = `
 }
 .es-rim.filled .es-rim-label { background: #4caf50; }
 .es-rim.active .es-rim-label { background: #2196c9; }
+/* 表示の可否は renderRims() が .is-on で切り替える。インラインの display に
+   していたときはメディアクエリで消せなかった(インラインが CSS に勝つため) */
 .es-viewer-legend {
   position: absolute;
   left: 10px;
   bottom: 10px;
-  display: flex;
+  display: none;
   gap: 10px;
   background: rgba(255, 255, 255, .94);
   border: 1px solid #d5dbdf;
@@ -822,6 +829,9 @@ export const OVERLAY_STYLES = `
   font-size: 11px;
   color: #5b6770;
   pointer-events: none;
+}
+.es-viewer-legend.is-on {
+  display: flex;
 }
 .es-viewer-legend span {
   display: flex;
@@ -868,7 +878,8 @@ export const OVERLAY_STYLES = `
   }
   /* 幅は basis で決める。中身で伸びると ResizeObserver がループするので min-width:0 必須 */
   .es-preview-slot { flex: 1 1 58%; min-width: 0; margin-bottom: 14px; }
-  /* プレビューと入力欄を同時に視界に収め、スクロールしての見比べを減らす */
+  /* プレビューと入力欄を同時に視界に収め、スクロールしての見比べを減らす。
+     この上限が当たるのは縦長の切り出しだけで、横長は先に幅で頭打ちになる */
   .es-preview-wrap canvas.es-crop { max-height: 36vh; }
   .es-question-preview {
     display: block;
@@ -892,14 +903,21 @@ export const OVERLAY_STYLES = `
   }
   /* 下書き復元バー等が常時表示のquestionPaneと競合して編集領域を圧迫しすぎないよう縮める */
   .es-notices { max-height: 22vh; }
+  /* 凡例は解答用紙ペインに浮いて本文に重なる。狭い画面では枠のラベルが
+     「— 入力中」「— 未入力」「— 編集不可」と状態を文字で書いているので出さない
+     (ツールバーへ移すと flex-wrap で2行目に折り返し、36vh しかないペインを
+     さらに削るため採らない) */
+  .es-viewer-legend.is-on { display: none; }
   .es-preview-head { display: none; }
   /* 枠(.es-preview-wrap)は canvas と同じ大きさのままにすること。
      ここを width:100% にすると、canvas の左端と枠の左端がずれて
      オーバーレイ画像と rim ガイド(どちらも絶対配置)の位置計算が狂う */
   .es-preview-slot { margin-bottom: 10px; }
   /* 解答欄内に収まるかの最終確認用の帯。問題文はquestionPaneが常時見せるので、
-     ここはtextareaの領域を残すため控えめな固定高さにする */
-  .es-preview-wrap canvas.es-crop { max-height: 120px; }
+     textareaの領域を残すため上限は控えめにする。ただし1文字の縦書き解答欄
+     (縦横比 0.7 前後)が読める大きさは要る。この上限が当たるのは縦長の
+     切り出しだけで、横長(実機の大多数)は先に幅で頭打ちになるため縦の予算は増えない */
+  .es-preview-wrap canvas.es-crop { max-height: min(200px, 26vh); }
   .es-editor-nav.pc-only { display: none; }
   .es-editor-head .es-editor-name { display: none; }
   .es-progress-count, .es-autosave { display: none; }

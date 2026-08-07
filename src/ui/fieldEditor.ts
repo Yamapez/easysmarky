@@ -206,6 +206,19 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   // 非表示中は描けないプレビューが永久に描かれなくなる。
   let lastRendered: string | null = null;
 
+  /**
+   * canvas に効いている max-height を px で読む。高さの上限の唯一の出所は
+   * styles.ts 側の `max-height` 宣言で、メディアクエリ・vh・min() の解決は
+   * ブラウザに任せて使用値を受け取る(ここにブレークポイントを複製しない)。
+   * 絶対長に解決されない場合(none / % など)は「上限なし」として扱う。
+   */
+  function cropMaxHeight(): number {
+    const raw = getComputedStyle(cropCanvas).maxHeight;
+    if (!raw || raw === "none") return Infinity;
+    const px = parseFloat(raw);
+    return raw.endsWith("px") && Number.isFinite(px) && px > 0 ? px : Infinity;
+  }
+
   function updatePreview(): void {
     // 切り出しが終わるまでは正しいスケールを出せない(canvas の width 属性は
     // 既定の 300 が入っているだけなので、それを基準にしてはいけない)。
@@ -217,12 +230,40 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     if (avail <= 0) return;
     // 解答欄の大きさは設問ごとに桁違い(実機では 78x130 と 665x76 が同居する)。
     // canvas の内部解像度のまま置くと表示が実質1:1になり、小さい解答欄は極端に
-    // 小さく出る。使える幅いっぱいに広げ、縦長のものは CSS の max-height で抑える
-    // (縦横比は height:auto と CSS の min/max アルゴリズムが保つ)。
+    // 小さく出る。そこで使える幅いっぱいに広げ、縦長のものは高さで頭打ちにする。
+    //
+    // **幅だけ指定して height:auto に任せてはいけない。** CSS が intrinsic ratio を
+    // 保つのは width と height が両方 auto のときだけ(CSS 2.1 §10.4 の制約表)で、
+    // 幅を明示した状態で max-height が当たると高さだけが潰れ、横に引き伸ばされた絵に
+    // なる。実機(幅393px)で縦長の解答欄が 382x96 に伸び、丸囲みの ⓐⓑⓒ が楕円に、
+    // 罫線が太い帯になっていた原因がこれ(v0.8.0)。幅と高さの両方をここで決める。
+    //
     // 枠(.es-preview-wrap)の左右ボーダーぶんを引く。引かないと canvas の
     // max-width:100% に当たって、枠がスロットより2px狭くなる
     const wrapBorder = previewWrap.offsetWidth - previewWrap.clientWidth;
-    cropCanvas.style.width = `${Math.max(1, avail - wrapBorder)}px`;
+    const availW = Math.max(1, avail - wrapBorder);
+    // 縦横比の真値は canvas の内部解像度(= 切り出したページ画像のピクセル数)。
+    // rect は base_sheet 座標なので、解像度が非等方なときズレる
+    const ratio = cropCanvas.width / cropCanvas.height;
+    if (!Number.isFinite(ratio) || ratio <= 0) return;
+    const maxH = cropMaxHeight();
+    let dispW = availW;
+    let dispH = dispW / ratio;
+    if (dispH > maxH) {
+      // 縦長の解答欄。高さで頭打ちにして、幅は縦横比に合わせて縮める
+      // (.es-preview-wrap は width:fit-content + margin:0 auto なので枠ごと中央に寄る)
+      dispH = maxH;
+      dispW = maxH * ratio;
+    }
+    const wPx = `${Math.max(1, dispW)}px`;
+    const hPx = `${Math.max(1, dispH)}px`;
+    // 同じ値の再代入でもレイアウトを触らない(ResizeObserver を無駄に起こさない)
+    if (cropCanvas.style.width !== wPx || cropCanvas.style.height !== hPx) {
+      cropCanvas.style.width = wPx;
+      cropCanvas.style.height = hPx;
+    }
+    // 以降は「実際に画面に出ている箱」を基準にする。想定外の CSS が当たっても
+    // オーバーレイと rim ガイドが表示と食い違わない
     const box = cropCanvas.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return;
     const trimmed = field.text.trim();

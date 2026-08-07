@@ -185,7 +185,6 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     '<span><span class="es-legend-swatch filled"></span>入力済み</span>' +
     '<span><span class="es-legend-swatch active"></span>入力中</span>' +
     '<span><span class="es-legend-swatch empty"></span>未入力</span>';
-  legend.style.display = "none";
   body.appendChild(legend);
 
   const rimEls = new Map<number, HTMLButtonElement>();
@@ -206,11 +205,13 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     const sheet = currentSheetSize();
     if (!rims || !sheet) {
       rimLayer.style.display = "none";
-      legend.style.display = "none";
+      legend.classList.remove("is-on");
       return;
     }
     rimLayer.style.display = "block";
-    legend.style.display = "flex";
+    // display をインラインで書かない。狭い画面ではメディアクエリで凡例を消すので、
+    // インライン指定にすると CSS 側から消せなくなる
+    legend.classList.add("is-on");
 
     for (const field of rims.fields) {
       if (pageArrayIndex(answerImages, field.page) !== index) continue;

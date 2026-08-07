@@ -138,23 +138,40 @@ function check(name, ok, detail) {
   checks.push({ name, ok: !!ok, detail });
 }
 
-function assertAll(label, r) {
+/**
+ * 表示の縦横比が canvas の内部解像度の比と一致するか(1%以内)。
+ * 幅だけ指定して height:auto に任せると、max-height が当たったときに高さだけ潰れて
+ * 横に伸びる(v0.8.0の不具合)。ここが唯一その崩れを捕まえる検査。
+ */
+const ratioOk = (st) =>
+  !!st && st.intrinsicRatio > 0 && st.renderedRatio > 0 &&
+  Math.abs(st.renderedRatio - st.intrinsicRatio) / st.intrinsicRatio <= 0.01;
+/** 高さの上限に当たっているか(= 幅いっぱいには広がらない状態) */
+const heightCapped = (st) =>
+  !!st && st.maxHeightPx != null && st.renderedHeight >= st.maxHeightPx - 1;
+
+function assertAll(label, r, viewportWidth) {
   const s = r.steps;
+  const isMobile = viewportWidth < 900;
 
   // --- 1設問集中レイアウトの骨格 ---
-  // 設問は ア・イ・エ(編集不可)・ウ の4件(page→id順。エは選択式で編集不可)
-  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 4, s.initial.stripChips);
+  // 設問は ア・イ・エ(編集不可)・ウ・オ の5件(page→id順。エは選択式で編集不可、
+  // オは縦長の解答欄。ア と オ は最初から入力済み)
+  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 5, s.initial.stripChips);
   check(`${label}: 最初の設問が開いている`, s.initial.editorName.includes("問1"), s.initial.editorName);
-  check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 1/3", s.initial.progress);
+  check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 2/4", s.initial.progress);
 
   // --- 解答欄オーバーレイ(rim座標は解答用紙のものなので問題ページには出さない) ---
   check(`${label}: 問題ページには解答欄の枠を出さない`, s.initial.rimCount === 0, s.initial.rimCount);
   // rim の座標系は base_sheet.correct_image_size。実機に base_sheet.width/height は
   // 無いので、そこから取ろうとすると枠が1つも出なくなる(実機で実際に起きていた)。
   // 1ページ目の設問はア・イ・エ(編集不可)の3件
+  // 凡例は狭い画面では出さない(解答用紙ペインが狭く、本文に重なるため。
+  // 枠のラベルが「— 入力中」「— 未入力」と状態を文字で書いている)
   check(`${label}: 解答用紙にそのページの設問ぶんの枠と凡例が出る`,
-    s.answerSheet.rimCount === 3 && s.answerSheet.legendDisplay === "flex",
-    { rims: s.answerSheet.rimCount, legend: s.answerSheet.legendDisplay });
+    s.answerSheet.rimCount === 3 &&
+    s.answerSheet.legendDisplay === (isMobile ? "none" : "flex"),
+    { rims: s.answerSheet.rimCount, legend: s.answerSheet.legendDisplay, mobile: isMobile });
   check(`${label}: 編集不可の設問は枠もロック表示になる`,
     s.answerSheet.lockedRims === 1, s.answerSheet.lockedRims);
   // 1ページ目は用紙 1000x1400。rim[40,400,920,120] → left 4% / width 92%
@@ -246,7 +263,7 @@ function assertAll(label, r) {
   // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる。
   // rim[0,800,760,120] → left 0% / top 71.4285…% / width 95% / height 10.714…%
   check(`${label}: 設問を選ぶとその設問のページへ送られる`,
-    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 1,
+    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 2,
     { pager: s.stripNav.pagerLabel, rims: s.stripNav.rimCount });
   check(`${label}: 枠がページごとの用紙サイズで置かれる`,
     s.stripNav.firstRimStyle?.left === "0%" && s.stripNav.firstRimStyle?.width === "95%",
@@ -263,10 +280,15 @@ function assertAll(label, r) {
   {
     // 両ペイン常時表示なので、初期表示ですでにプレビューが描かれている
     const shown = s.initial.field1;
+    // 幅いっぱいに広がるのは高さの上限に当たっていないとき。当たったら縦横比を
+    // 保つために幅は狭くなる(縦長側は下の tallField で見る)
     check(`${label}: プレビューが使える幅いっぱいに拡縮される`,
-      !!shown && shown.slotWidth > 0 && Math.abs(shown.renderedWidth - shown.slotWidth) <= 5 &&
-      shown.renderedWidth !== shown.intrinsicWidth,
-      shown && { rendered: shown.renderedWidth, slot: shown.slotWidth, intrinsic: shown.intrinsicWidth });
+      !!shown && shown.slotWidth > 0 && shown.renderedWidth !== shown.intrinsicWidth &&
+      (heightCapped(shown)
+        ? shown.renderedWidth <= shown.slotWidth + 1
+        : Math.abs(shown.renderedWidth - shown.slotWidth) <= 5),
+      shown && { rendered: shown.renderedWidth, slot: shown.slotWidth,
+                 intrinsic: shown.intrinsicWidth, capped: heightCapped(shown) });
   }
   // 文字は解答欄の中央に置かれる。フォント実測値に依存しないので環境差で揺れない
   {
@@ -280,6 +302,31 @@ function assertAll(label, r) {
                  w: shown.renderedWidth, h: shown.renderedHeight });
   }
 
+  // --- 縦横比(v0.8.0 では横に引き伸ばされていた) ---
+  // 幅だけ px 指定して height:auto に任せると、CSS の max-height は高さだけを
+  // 切り詰める(縦横比を保つ CSS の規則は width/height が両方 auto のときだけ効く)。
+  // 実機では丸囲みの ⓐⓑⓒ が楕円になり、罫線が太い帯になって読めなくなっていた。
+  check(`${label}: 横長プレビューが縦横比を保つ`, ratioOk(s.initial.field1),
+    { intrinsic: s.initial.field1?.intrinsicRatio, rendered: s.initial.field1?.renderedRatio });
+  // 設問オは2ページ目(用紙 800x1120・解像度1.25倍)の rim[620,300,100,260]、余白 36。
+  // 172x332 → 画像ピクセルで 215x415(縦横比 0.518)
+  check(`${label}: 縦長の切り出しもページごとの座標系で換算される`,
+    s.tallField.crop?.intrinsicWidth === 215 && s.tallField.crop?.intrinsicHeight === 415,
+    s.tallField.crop);
+  check(`${label}: 縦長の解答欄では高さの上限に当たる(上限が効く経路を必ず通す)`,
+    heightCapped(s.tallField.field) &&
+    s.tallField.field.renderedWidth < s.tallField.field.slotWidth - 5,
+    s.tallField.field);
+  check(`${label}: 縦長プレビューが縦横比を保つ(max-heightで潰れない)`,
+    ratioOk(s.tallField.field), s.tallField.field);
+  check(`${label}: 縦長プレビューでも文字が解答欄の中央に置かれる`,
+    s.tallField.field?.centerX != null &&
+    Math.abs(s.tallField.field.centerX - s.tallField.field.renderedWidth / 2) < 1.5 &&
+    Math.abs(s.tallField.field.centerY - s.tallField.field.renderedHeight / 2) < 1.5,
+    s.tallField.field);
+  check(`${label}: 縦長の切り出しが実際の解答欄と一致する`,
+    s.tallField.centerPixel === "#ffefc2", s.tallField.centerPixel);
+
   // --- プレビュー描画 ---
   check(`${label}: 幅変更でスケールが再計算される`, s.resize.rescaledCorrectly === true,
     { png: [s.resize.pngWidthBefore, s.resize.pngWidthAfterShrink, s.resize.pngWidthAfterRestore] });
@@ -289,7 +336,7 @@ function assertAll(label, r) {
   check(`${label}: 入力したテキストのプレビューが出る`,
     s.typed.field.display === "block" && parseFloat(s.typed.field.width) > 0, s.typed.field);
   check(`${label}: 入力すると進捗とストリップが更新される`,
-    s.typed.progress === "入力済み 2/3" && s.typed.filledDots === 2,
+    s.typed.progress === "入力済み 3/4" && s.typed.filledDots === 3,
     { progress: s.typed.progress, dots: s.typed.filledDots });
   check(`${label}: 文字数と収まり判定が出る`, /字/.test(s.typed.fit), s.typed.fit);
   check(`${label}: Ctrl+↵ で次の設問に移る`,
@@ -339,7 +386,7 @@ try {
   for (const [label, w, h] of [["スマホ(430px)", 430, 900], ["PC(1400px)", 1400, 900]]) {
     await setViewport(send, w, h);
     await openHarness(send, URL_HARNESS);
-    assertAll(label, await evalJs(send, "window.__esAssert()"));
+    assertAll(label, await evalJs(send, "window.__esAssert()"), w);
   }
 
   // 目視確認用のスクリーンショット
@@ -356,6 +403,13 @@ try {
   await openHarness(send, URL_HARNESS);
   await evalJs(send, `window.__esView("edit")`);
   await screenshot(send, "mobile.png");
+
+  // 縦長の解答欄。他の設問は幅で先に頭打ちになるので、canvas の max-height が
+  // 当たる見た目を確認できるのはこの1枚だけ(高さの上限で幅も一緒に縮み、
+  // プレビューが枠ごと中央に寄っていれば縦横比は保たれている)
+  await openHarness(send, URL_HARNESS);
+  await evalJs(send, `window.__esView("tall")`);
+  await screenshot(send, "mobile-tall.png");
 } catch (e) {
   check("実行が最後まで完了する", false, String(e && e.stack || e));
 } finally {
