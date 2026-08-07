@@ -334,10 +334,16 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     // スマホの入力モードなどビューアが display:none のときは何もしない(戻ってきたときに再度呼ばれる)
     if (vw === 0 || vh === 0) return;
 
+    // ビューアが低いとき(常時分割のモバイル)は、同じ倍率・同じオフセットで
+    // パンすると枠がビューアの大半を占め、直前の設問文が見えなくなる。
+    // 低いほど拡大を抑え、上端を下げて文脈を多く残す。
+    const short = vh < 320;
+
     if (!userZoomed) {
       const rimWidthFrac = field.rim[2] / sheet.width;
       const contextFrac = Math.min(1, rimWidthFrac + 0.3);
-      const nextScale = Math.min(3, Math.max(1, 1 / contextFrac));
+      const maxZoom = short ? 2 : 3;
+      const nextScale = Math.min(maxZoom, Math.max(1, 1 / contextFrac));
       if (Math.abs(nextScale - zoomScale) > 0.01) {
         zoomScale = nextScale;
         render();
@@ -350,7 +356,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
       scroll.scrollTo({
         left: box.offsetLeft + box.offsetWidth / 2 - vw / 2,
         // 上端をやや上寄りに置く。枠の直前にある設問文が視界に入るように
-        top: box.offsetTop - vh * 0.35,
+        top: box.offsetTop - vh * (short ? 0.55 : 0.35),
       });
     });
   }

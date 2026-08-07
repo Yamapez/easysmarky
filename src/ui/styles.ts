@@ -319,11 +319,6 @@ export const OVERLAY_STYLES = `
   flex-direction: column;
   background: #fff;
 }
-/* スマホ: 問題ビューアと入力を行き来する。PCではメディアクエリで両方出す */
-.es-form[data-mode="view"] .es-pane-form { display: none; }
-.es-form[data-mode="edit"] .es-pane-question,
-.es-form[data-mode="edit"] .es-strip,
-.es-form[data-mode="edit"] .es-mobile-bar { display: none; }
 
 /* ===== 設問ヘッダ(エディタペイン上部) ===== */
 .es-editor-head {
@@ -333,16 +328,6 @@ export const OVERLAY_STYLES = `
   gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid #e5e9eb;
-}
-.es-editor-back {
-  border: none;
-  background: transparent;
-  color: #2196c9;
-  font-size: 14px;
-  min-height: 40px;
-  padding: 0;
-  font-family: inherit;
-  white-space: nowrap;
 }
 .es-editor-title {
   flex: 1 1 auto;
@@ -567,15 +552,6 @@ export const OVERLAY_STYLES = `
   color: #888;
   line-height: 1.6;
 }
-.es-field-pagelink {
-  border: none;
-  background: transparent;
-  color: #2196c9;
-  font-size: 13px;
-  padding: 4px 0;
-  min-height: 32px;
-  font-family: inherit;
-}
 
 /* ===== 保存バー ===== */
 .es-savebar {
@@ -644,28 +620,6 @@ export const OVERLAY_STYLES = `
   font-size: 12px;
   text-align: center;
   color: #7a848a;
-}
-
-/* ===== スマホの下部バー(問題ページ表示中) ===== */
-.es-mobile-bar {
-  flex: 0 0 auto;
-  background: #fff;
-  border-top: 1px solid #ddd;
-  box-shadow: 0 -4px 14px rgba(20, 40, 55, .10);
-  padding: 10px 12px 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.es-mobile-bar-info { flex: 1 1 auto; min-width: 0; }
-.es-mobile-bar-title { font-size: 13px; font-weight: bold; white-space: nowrap; }
-.es-mobile-bar-sub { font-size: 11px; color: #8b959b; white-space: nowrap; }
-.es-mobile-bar .es-save-btn,
-.es-mobile-bar .es-next-btn {
-  flex: 0 0 auto;
-  padding: 12px 14px;
-  font-size: 14px;
-  min-height: 44px;
 }
 
 /* ===== 設問ストリップ ===== */
@@ -903,8 +857,6 @@ export const OVERLAY_STYLES = `
     flex: 1 1 42%;
   }
   .es-form[data-mode] .es-strip { display: flex; }
-  .es-form[data-mode] .es-mobile-bar { display: none; }
-  .es-editor-back { display: none !important; }
   .es-savebar .es-editor-nav { display: none; }
   .es-key-hints { display: flex; }
   .es-field-name { display: none; }
@@ -925,19 +877,31 @@ export const OVERLAY_STYLES = `
   }
 }
 
-/* ===== スマホ: 入力中は問題ページの該当箇所だけを帯で見せる ===== */
+/* ===== スマホ: 問題ページと入力を常に上下同時に見せる ===== */
 @media (max-width: 899px) {
+  /* 問題文(解答用紙に印字された設問文)を常時表示するための領域。
+     可変にすると入力内容量でガタつくので固定高さにする */
+  .es-pane-question {
+    flex: 0 0 36vh;
+    min-height: 170px;
+    border-bottom: 1px solid #ddd;
+  }
+  .es-pane-form {
+    flex: 1 1 auto;
+    min-height: 0; /* editorBody の内部スクロールを効かせるために必須 */
+  }
+  /* 下書き復元バー等が常時表示のquestionPaneと競合して編集領域を圧迫しすぎないよう縮める */
+  .es-notices { max-height: 22vh; }
   .es-preview-head { display: none; }
   /* 枠(.es-preview-wrap)は canvas と同じ大きさのままにすること。
      ここを width:100% にすると、canvas の左端と枠の左端がずれて
      オーバーレイ画像と rim ガイド(どちらも絶対配置)の位置計算が狂う */
   .es-preview-slot { margin-bottom: 10px; }
-  /* 入力中は帯として見せる。縦長の解答欄は幅が縮むぶん中身も小さくなるが、
-     テキスト入力に画面を使いたいのでここでは高さを優先する */
-  .es-preview-wrap canvas.es-crop { max-height: 30vh; }
+  /* 解答欄内に収まるかの最終確認用の帯。問題文はquestionPaneが常時見せるので、
+     ここはtextareaの領域を残すため控えめな固定高さにする */
+  .es-preview-wrap canvas.es-crop { max-height: 120px; }
   .es-editor-nav.pc-only { display: none; }
   .es-editor-head .es-editor-name { display: none; }
-  .es-editor-title { text-align: right; }
   .es-progress-count, .es-autosave { display: none; }
   .es-progress-bar { width: 52px; }
   .es-header-right { gap: 8px; }

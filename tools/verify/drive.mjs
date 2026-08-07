@@ -6,7 +6,7 @@
 //
 // 重要: --virtual-time-budget は使わないこと。仮想時間ではレンダリング更新が
 // 実時間どおりに走らず ResizeObserver が配信されないため、
-// 「タブ切替でプレビューが描画されない」という偽の不具合が出る。
+// 「幅変更後にプレビューが再描画されない」という偽の不具合が出る。
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile, mkdir, writeFile, rm } from "node:fs/promises";
@@ -168,30 +168,24 @@ function assertAll(label, r) {
   // --- 解答欄タップ → 入力 ---
   check(`${label}: 解答欄をタップするとその設問が開く`,
     s.afterRimTap.editorName.includes("問1"), s.afterRimTap);
+  // 常時上下分割レイアウト: 問題ビューアと入力ペインは、PC・スマホどちらの幅でも
+  // 常に両方表示されている(タブ切替で片方が隠れることはもう無い)
+  check(`${label}: 問題ビューアと入力の両ペインが常に出る`,
+    s.initial.questionPaneDisplay !== "none" && s.initial.formPaneDisplay !== "none",
+    `${s.initial.questionPaneDisplay}/${s.initial.formPaneDisplay}`);
+  check(`${label}: 初期表示で既存下書きのプレビューが描画される`,
+    s.initial.field1.display === "block" && parseFloat(s.initial.field1.width) > 0, s.initial.field1);
   if (s.initial.twoPaneMediaQuery) {
-    check(`${label}: 2カラムで問題と入力の両ペインが出る`,
-      s.initial.questionPaneDisplay !== "none" && s.initial.formPaneDisplay !== "none",
-      `${s.initial.questionPaneDisplay}/${s.initial.formPaneDisplay}`);
-    check(`${label}: 初期表示で既存下書きのプレビューが描画される`,
-      s.initial.field1.display === "block" && parseFloat(s.initial.field1.width) > 0, s.initial.field1);
     check(`${label}: 解答欄プレビューの横に問題プレビューが出る`,
       s.initial.questionPreviewDisplay !== "none" && s.initial.questionPreviewCanvasWidth > 0,
       { display: s.initial.questionPreviewDisplay, width: s.initial.questionPreviewCanvasWidth });
   } else {
     check(`${label}: 問題プレビューは狭い画面では出さない`,
       s.initial.questionPreviewDisplay === "none", s.initial.questionPreviewDisplay);
-    check(`${label}: 問題ページから始まり入力ペインは畳まれている`,
-      s.initial.dataMode === "view" && s.initial.formPaneDisplay === "none",
-      `${s.initial.dataMode}/${s.initial.formPaneDisplay}`);
-    check(`${label}: 解答欄をタップすると入力モードに入る`,
-      s.afterRimTap.dataMode === "edit", s.afterRimTap.dataMode);
-    // 最重要: 入力ペインが display:none で始まるため、既存下書きのプレビューを描くのは
-    // 編集モードに入って ResizeObserver が発火する経路だけになる。
-    // ここが落ちると、下書きを再開したスマホユーザーはプレビューが永久に空になる。
-    check(`${label}: 入力モードでプレビューが描画される(ResizeObserver経由)`,
-      s.afterRimTap.field1.display === "block" && parseFloat(s.afterRimTap.field1.width) > 0,
-      s.afterRimTap);
   }
+  // 常時分割後の主動線: rimタップ後はテキストエリアにフォーカスが移り、すぐ入力できる
+  check(`${label}: 解答欄をタップするとテキストエリアにフォーカスが移る`,
+    s.afterRimTap.textareaFocused === true, s.afterRimTap);
 
   // --- 現在の枠の強調(選択中だけ目立たせ、他は沈める) ---
   check(`${label}: 選択中の枠が強調され、他の枠は沈む`,
@@ -267,7 +261,8 @@ function assertAll(label, r) {
   // (実機で 78x130 の設問と 665x76 の設問が同じペインに同居する)
   // 差の許容値は .es-preview-wrap の左右ボーダー(2px×2辺=4px)ぶん
   {
-    const shown = s.initial.twoPaneMediaQuery ? s.initial.field1 : s.afterRimTap.field1;
+    // 両ペイン常時表示なので、初期表示ですでにプレビューが描かれている
+    const shown = s.initial.field1;
     check(`${label}: プレビューが使える幅いっぱいに拡縮される`,
       !!shown && shown.slotWidth > 0 && Math.abs(shown.renderedWidth - shown.slotWidth) <= 5 &&
       shown.renderedWidth !== shown.intrinsicWidth,
@@ -275,7 +270,8 @@ function assertAll(label, r) {
   }
   // 文字は解答欄の中央に置かれる。フォント実測値に依存しないので環境差で揺れない
   {
-    const shown = s.initial.twoPaneMediaQuery ? s.initial.field1 : s.afterRimTap.field1;
+    // 両ペイン常時表示なので、初期表示ですでにプレビューが描かれている
+    const shown = s.initial.field1;
     check(`${label}: プレビューの文字が解答欄の中央に置かれる`,
       !!shown && shown.centerX != null &&
       Math.abs(shown.centerX - shown.renderedWidth / 2) < 1.5 &&
@@ -354,12 +350,12 @@ try {
   await evalJs(send, `window.__esView("view")`);
   await screenshot(send, "desktop.png");
 
+  // 常時上下分割なので、問題ビューアと入力欄は同じ画面に常に同居する。
+  // rimタップ後(入力欄にフォーカスした状態)の1枚だけで両ペインの共存を確認できる
   await setViewport(send, 430, 900);
   await openHarness(send, URL_HARNESS);
-  await evalJs(send, `window.__esView("view")`);
-  await screenshot(send, "mobile-view.png");
   await evalJs(send, `window.__esView("edit")`);
-  await screenshot(send, "mobile-edit.png");
+  await screenshot(send, "mobile.png");
 } catch (e) {
   check("実行が最後まで完了する", false, String(e && e.stack || e));
 } finally {

@@ -310,24 +310,14 @@ async function openSheet() {
 
 async function runAssertions() {
   const results = { mode: "assert", viewport: { w: innerWidth, h: innerHeight }, steps: {} };
-  const t0 = Date.now();
 
   await openSheet();
 
-  const form = q(".es-form");
   const isTwoPane = matchMedia("(min-width: 900px)").matches;
 
-  // 入力ペインの表示/非表示の切り替わりを記録する。ここが 0 → N に変わったときに
-  // fieldEditor の ResizeObserver が発火し、プレビューが描かれる。
-  const probeLog = [];
-  const probeRO = new ResizeObserver((entries) => {
-    for (const e of entries) probeLog.push({ at: Date.now() - t0, w: Math.round(e.contentRect.width * 100) / 100 });
-  });
-  probeRO.observe(q(".es-pane-form"));
   await sleep(300);
 
   results.steps.initial = {
-    dataMode: form.dataset.mode,
     twoPaneMediaQuery: isTwoPane,
     questionPaneDisplay: getComputedStyle(q(".es-pane-question")).display,
     formPaneDisplay: getComputedStyle(q(".es-pane-form")).display,
@@ -371,30 +361,20 @@ async function runAssertions() {
     pagerLabel: (q(".es-viewer-count").textContent || "").trim(),
   };
 
-  // --- 最重要: 解答欄をタップ → 入力に入ったときにプレビューが描かれるか ---
-  // スマホは入力ペインが display:none で始まるため、描画経路は
-  // 「編集モードに入って ResizeObserver が発火する」ときだけになる。
-  const probeBeforeTap = probeLog.length;
+  // --- 最重要: 解答欄をタップ → その設問が開き、テキストエリアにフォーカスが移るか ---
+  // 常時分割レイアウトでは問題ビューアは隠れないので、rimタップ後の主動線は
+  // 「テキストエリアへフォーカスが移って、すぐ入力できる」ことになる。
   // 枠が1つも出ていない場合でも run を最後まで走らせ、どのチェックが落ちたかを
   // 読めるようにする(枠が出ないこと自体は上の answerSheet のチェックが捕まえる)
   const firstRim = qa(".es-rim")[0];
   if (firstRim) firstRim.click();
   await sleep(1200);
   results.steps.afterRimTap = {
-    dataMode: form.dataset.mode,
     editorName: (q(".es-editor-name").textContent || "").trim(),
     field1: overlayState(),
-    paneResizesOnTap: probeLog.length - probeBeforeTap,
-    probeLog: probeLog.slice(),
+    textareaFocused: shadow().activeElement === q("textarea.es-textarea"),
   };
-
-  // モバイルは rim タップ直後 edit モードでビューアが display:none になっているため、
-  // 以降の「枠の見え方」を測るテストはまず問題ビューアが見える view モードへ戻す
-  const backToView = async (waitMs) => {
-    q(".es-editor-back")?.click();
-    await sleep(waitMs ?? 500);
-  };
-  await backToView(400);
+  await sleep(400);
 
   // --- 現在の枠の強調(選択中の枠だけ目立たせ、他は沈める) ---
   results.steps.emphasis = {
@@ -414,16 +394,14 @@ async function runAssertions() {
   await sleep(200);
   results.steps.zoomPersist = { afterZoomIn: q(".es-viewer-canvas").style.width };
   qa(".es-strip-chip")[1].click(); // イ(同じページの別設問)
-  await sleep(300);
-  await backToView();
+  await sleep(500);
   results.steps.zoomPersist.afterFieldSwitch = q(".es-viewer-canvas").style.width;
 
   // --- 手動ズームしていなければ、小さい解答欄(エ)へジャンプすると自動でズームする ---
   zoomBtn("全体").click();
   await sleep(200);
   qa(".es-strip-chip")[2].click(); // エ(編集不可・幅の狭い解答欄)
-  await sleep(300);
-  await backToView();
+  await sleep(500);
   results.steps.autoZoom = {
     editorName: (q(".es-editor-name").textContent || "").trim(),
     canvasWidth: q(".es-viewer-canvas").style.width,
@@ -434,8 +412,7 @@ async function runAssertions() {
   zoomBtn("全体").click();
   await sleep(200);
   qa(".es-strip-chip")[3].click(); // ウ(2ページ目)
-  await sleep(300);
-  await backToView(700);
+  await sleep(1000);
   results.steps.autoPan = {
     editorName: (q(".es-editor-name").textContent || "").trim(),
     pagerLabel: (q(".es-viewer-count").textContent || "").trim(),
@@ -461,7 +438,6 @@ async function runAssertions() {
   results.steps.stripNav = {
     editorName: (q(".es-editor-name").textContent || "").trim(),
     activeChipIndex: qa(".es-strip-chip").findIndex((c) => c.classList.contains("active")),
-    dataMode: form.dataset.mode,
     // 設問3は2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
     // 切り出しが用紙の外へ出ないか、ページごとの座標系で換算されているかを見る
     field3Crop: cropSize(".es-preview-wrap canvas.es-crop"),
@@ -494,7 +470,6 @@ async function runAssertions() {
   await sleep(900);
   const afterRestore = overlayState();
   mo.disconnect();
-  probeRO.disconnect();
 
   // overlayImg の幅は「テキストPNGの実寸 × scale」なので、
   // scale に比例していれば再計算が正しく効いている
@@ -519,7 +494,6 @@ async function runAssertions() {
   await sleep(500);
   results.steps.nextEmpty = {
     editorName: (q(".es-editor-name").textContent || "").trim(),
-    dataMode: form.dataset.mode,
     textareaValue: q("textarea.es-textarea").value,
   };
 
@@ -641,14 +615,13 @@ async function runView(mode) {
     await sleep(500);
   }
   if (want === "edit") {
+    // 常時分割レイアウトでは問題ビューアは隠れないので、rimタップは
+    // 「その設問を選んでテキストエリアにフォーカスする」だけの意味になる
     const rim = qa(".es-rim")[0];
     if (rim) rim.click(); else qa(".es-strip-chip")[0].click();
-  } else {
-    const back = visible(".es-editor-back");
-    if (back) back.click();
   }
   await sleep(900);
-  return { mode: "view", view: want, dataMode: q(".es-form").dataset.mode };
+  return { mode: "view", view: want };
 }
 
 // CDPドライバから呼ぶ用(実時間で動く。--virtual-time-budget では

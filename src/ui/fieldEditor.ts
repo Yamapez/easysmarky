@@ -24,8 +24,6 @@ export interface FieldEditorOptions {
   /** base_sheet.dpi。プレビューに足す余白を実寸(mm)基準で決めるのに使う */
   sheetDpi?: number;
   onChange: (field: EditableField) => void;
-  /** 問題ビューアをこの設問のページへ送る(編集不可の設問から使う) */
-  onShowPage?: (page: number) => void;
 }
 
 export interface FieldEditorHandle {
@@ -75,15 +73,6 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       : "この設問は選択肢・画像などの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
     card.appendChild(name);
     card.appendChild(note);
-    const onShowPage = opts.onShowPage;
-    if (onShowPage) {
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "es-field-pagelink";
-      link.textContent = "解答用紙の該当ページを見る";
-      link.addEventListener("click", () => onShowPage(field.raw.page));
-      card.appendChild(link);
-    }
     el.appendChild(card);
     return { element: el, getField: () => field, focus: () => {}, destroy: () => {} };
   }

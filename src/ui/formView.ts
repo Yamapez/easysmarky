@@ -24,9 +24,6 @@ export interface FormViewOptions {
   onBack: () => void;
 }
 
-/** ビューアと入力を横に並べる幅。styles.ts の @media (min-width: 900px) と一致させること */
-const TWO_PANE_MIN_WIDTH = 900;
-
 function isFilledField(field: EditableField): boolean {
   return field.isEditableText && !field.hasExtraStamps && field.text.trim() !== "";
 }
@@ -142,10 +139,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   // --- 設問ヘッダ ---
   const editorHead = document.createElement("div");
   editorHead.className = "es-editor-head";
-  const backToViewBtn = document.createElement("button");
-  backToViewBtn.type = "button";
-  backToViewBtn.className = "es-editor-back";
-  backToViewBtn.textContent = "← 問題に戻る";
   const prevBtn = document.createElement("button");
   prevBtn.type = "button";
   prevBtn.className = "es-editor-nav pc-only";
@@ -164,7 +157,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   nextFieldBtn.className = "es-editor-nav primary pc-only";
   nextFieldBtn.textContent = "▶";
   nextFieldBtn.setAttribute("aria-label", "次の設問");
-  editorHead.appendChild(backToViewBtn);
   editorHead.appendChild(prevBtn);
   editorHead.appendChild(titleWrap);
   editorHead.appendChild(nextFieldBtn);
@@ -232,7 +224,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         const f = fieldById.get(id);
         return !!f && isFilledField(f);
       },
-      onSelect: (id) => focusField(id, { openEditor: true }),
+      onSelect: (id) => focusField(id, { focusInput: true }),
     },
   });
   questionPane.appendChild(viewer.element);
@@ -250,33 +242,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       const f = fieldById.get(id);
       return !!f && isFilledField(f);
     },
-    onSelect: (id) => focusField(id, { openEditor: true }),
+    onSelect: (id) => focusField(id, { focusInput: true }),
   });
   form.appendChild(strip.element);
 
-  // ---------------------------------------------------------------- スマホ下部バー
-  const mobileBar = document.createElement("div");
-  mobileBar.className = "es-mobile-bar";
-  const mobileInfo = document.createElement("div");
-  mobileInfo.className = "es-mobile-bar-info";
-  const mobileTitle = document.createElement("div");
-  mobileTitle.className = "es-mobile-bar-title";
-  const mobileSub = document.createElement("div");
-  mobileSub.className = "es-mobile-bar-sub";
-  mobileInfo.appendChild(mobileTitle);
-  mobileInfo.appendChild(mobileSub);
-  const mobileSaveBtn = document.createElement("button");
-  mobileSaveBtn.type = "button";
-  mobileSaveBtn.className = "es-save-btn";
-  mobileSaveBtn.textContent = "下書き保存";
-  const mobileNextEmptyBtn = document.createElement("button");
-  mobileNextEmptyBtn.type = "button";
-  mobileNextEmptyBtn.className = "es-next-btn";
-  mobileNextEmptyBtn.textContent = "次の未入力へ";
-  mobileBar.appendChild(mobileInfo);
-  mobileBar.appendChild(mobileSaveBtn);
-  mobileBar.appendChild(mobileNextEmptyBtn);
-  form.appendChild(mobileBar);
 
   // ---------------------------------------------------------------- 下書きの保存
   let lastSavedAt: number | null = null;
@@ -323,17 +292,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     progressFill.style.width = editableCount > 0 ? `${(filled / editableCount) * 100}%` : "0";
     progressFill.classList.toggle("done", editableCount > 0 && filled >= editableCount);
 
-    const remaining = editableCount - filled;
-    mobileTitle.textContent = remaining > 0 ? `残り ${remaining} 設問` : "すべて入力済みです";
     const noEmpty = nextEmptyId() === null;
     nextEmptyBtn.disabled = noEmpty;
-    mobileNextEmptyBtn.disabled = noEmpty;
   }
 
   function refreshStatusText(): void {
     const text = lastSavedAt ? `この端末に自動保存 ${formatTime(lastSavedAt)}` : "";
     autosaveEl.textContent = text;
-    mobileSub.textContent = text;
   }
 
   function refreshFieldMeta(): void {
@@ -405,17 +370,15 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         // 「保存済み」の表示が居座って誤認させないよう、編集を再開したら消す
         if (!saving) setSaveStatus("", "");
       },
-      onShowPage: () => {
-        // 編集不可カードからの「問題を見る」。setMode が該当設問の枠までパン/ズームして見せる
-        setMode("view");
-      },
     });
     editorBody.appendChild(editor.element);
   }
 
   interface FocusOptions {
-    /** スマホで入力画面へ切り替えるか(枠タップ・ストリップ・次の未入力へ) */
-    openEditor?: boolean;
+    /** タップ・ストリップ選択・「次の未入力へ」など、ユーザーが明示的にその設問へ
+     *  向かったときだけ true。テキストエリアへ自動フォーカスするかどうかに使う
+     *  (勝手にキーボードを出さない、という既存方針を維持) */
+    focusInput?: boolean;
     focusText?: boolean;
   }
 
@@ -426,9 +389,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     refreshFieldMeta();
     strip.setActive(id);
     viewer.showField(id);
-    if (options.openEditor) setMode("edit");
-    // スマホでは自分から入力に入ったときだけフォーカスする(勝手にキーボードを出さない)
-    if (options.focusText !== false && (options.openEditor || window.innerWidth >= TWO_PANE_MIN_WIDTH)) {
+    if (options.focusText !== false && options.focusInput) {
       editor?.focus();
     }
   }
@@ -447,24 +408,14 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     if (fields.length === 0) return;
     const target = findStepTarget(delta);
     if (target) {
-      focusField(target.raw.id, { openEditor: form.dataset.mode === "edit" });
+      focusField(target.raw.id, { focusInput: true });
       return;
     }
     // 編集可能な設問がひとつも無いシートでは、従来どおり全件を歩く
     if (!fields.some(isEditable)) {
       const current = focusId != null ? fields.findIndex((f) => f.raw.id === focusId) : -1;
       const next = Math.min(Math.max(current + delta, 0), fields.length - 1);
-      focusField(fields[next].raw.id, { openEditor: form.dataset.mode === "edit" });
-    }
-  }
-
-  function setMode(mode: "view" | "edit"): void {
-    form.dataset.mode = mode;
-    // スマホでは view 中 .es-pane-question が display:none になり、切替直後は
-    // ビューアの描画・スクロール位置が失われている。復帰時に改めて枠へ寄せ直す
-    if (mode === "view" && focusId != null) {
-      const id = focusId;
-      requestAnimationFrame(() => viewer.showField(id));
+      focusField(fields[next].raw.id, { focusInput: true });
     }
   }
 
@@ -548,7 +499,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       const jumpBtn = document.createElement("button");
       jumpBtn.type = "button";
       jumpBtn.textContent = "該当の設問を見る";
-      jumpBtn.addEventListener("click", () => focusField(mismatchedIds[0], { openEditor: true }));
+      jumpBtn.addEventListener("click", () => focusField(mismatchedIds[0], { focusInput: true }));
       actions.appendChild(jumpBtn);
     }
     const retryBtn = document.createElement("button");
@@ -568,7 +519,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     if (saving || guard.blocked) return;
     saving = true;
     saveBtn.disabled = true;
-    mobileSaveBtn.disabled = true;
     saveNotice?.remove();
     saveNotice = null;
     setSaveStatus("保存中...", "#7a848a");
@@ -603,17 +553,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     } finally {
       saving = false;
       saveBtn.disabled = guard.blocked;
-      mobileSaveBtn.disabled = guard.blocked;
     }
   }
 
   saveBtn.disabled = guard.blocked;
-  mobileSaveBtn.disabled = guard.blocked;
   saveBtn.addEventListener("click", () => void runSave());
-  mobileSaveBtn.addEventListener("click", () => void runSave());
 
   // ---------------------------------------------------------------- 操作
-  backToViewBtn.addEventListener("click", () => setMode("view"));
   prevBtn.addEventListener("click", () => stepField(-1));
   nextFieldBtn.addEventListener("click", () => stepField(1));
   mobilePrevBtn.addEventListener("click", () => stepField(-1));
@@ -622,11 +568,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   function goToNextEmpty(): void {
     const next = nextEmptyField();
     if (!next) return;
-    focusField(next.id, { openEditor: true });
+    focusField(next.id, { focusInput: true });
     if (next.wrapped) announce("先頭に戻りました(この先に未入力はありません)");
   }
   nextEmptyBtn.addEventListener("click", goToNextEmpty);
-  mobileNextEmptyBtn.addEventListener("click", goToNextEmpty);
 
   // ショートカットはオーバーレイ全体で効かせたいので window で受ける。
   // 一覧に戻る(form が捨てられる)か、オーバーレイが閉じられたら自分で外れる。
@@ -656,9 +601,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   // ---------------------------------------------------------------- 初期表示
   const firstEditable = fields.find(isEditable) ?? fields[0];
   if (firstEditable) {
-    // スマホは問題ページから始める(問題文が見えないまま解答を求めない)ので、
-    // ここでは入力画面へは切り替えない。
-    focusField(firstEditable.raw.id, { openEditor: false, focusText: false });
+    // 勝手にキーボードを出さないよう、初期表示ではテキストエリアへフォーカスしない
+    focusField(firstEditable.raw.id, { focusText: false });
   }
   refreshProgress();
   refreshStatusText();
