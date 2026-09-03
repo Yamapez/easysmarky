@@ -15,8 +15,7 @@ const UPSTREAM_HOST = "digi-repo.smarky.jp";
 
 // SPA シェルに差し込むスクリプト。userscript 版(右下に launcher ボタンを常駐させる)を使う。
 // iife 版はロード即オーバーレイを開いてしまい、公式画面での「提出」操作を妨げるため使わない。
-const INJECT_SCRIPT =
-  '<script src="https://yamapez.github.io/easysmarky/easysmarky.user.js"></script>';
+const EASYSMARKY_URL = "https://yamapez.github.io/easysmarky/easysmarky.user.js";
 
 // 認証を伴わない静的アセット。エッジにキャッシュしてコールドロード(app.js+vendors.js で約11MB)を軽くする。
 function isStaticAsset(pathname) {
@@ -26,8 +25,51 @@ function isStaticAsset(pathname) {
   );
 }
 
+/**
+ * easysmarky 本体を <script> タグとして返す。
+ *
+ * 外部 src ではなく**サーバー側で取得して HTML に直接埋め込む**。クライアントが
+ * yamapez.github.io に到達できない環境(学校ネットワークの制限など)でも動かすため。
+ * 取得に失敗したときだけ、従来どおり外部 src のタグにフォールバックする。
+ */
+async function easysmarkyScriptTag() {
+  try {
+    const res = await fetch(EASYSMARKY_URL, {
+      cf: { cacheEverything: true, cacheTtl: 600 },
+    });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const code = await res.text();
+    // 文字列リテラル中に "</script" があると <script> ブロックを脱出して HTML が壊れる。
+    const safe = code.replace(/<\/script/gi, "<\\/script");
+    return `<script>${safe}</script>`;
+  } catch {
+    return `<script src="${EASYSMARKY_URL}"></script>`;
+  }
+}
+
+/**
+ * ハッシュが空のときだけ、学校のログイン画面のハッシュを設定する小さなブートストラップ。
+ *
+ * 公式SPAはログインAPIに渡す school_url_prefix を URL のハッシュ
+ * (/#/<prefix>/student_site/sign_in)のルートパラメータからしか取らない。ハッシュ無しで
+ * ルートを開くと空になり「ログインに失敗しました。URLが不正です。」(410)になる。
+ *
+ * サーバー側の 302 リダイレクトではダメ。**フラグメントはサーバーに送られない**ため、
+ * どのハッシュルートにいてもリロード時のリクエストは GET / になり、
+ * レポートの途中でリロードするとログイン画面に飛ばされて現在位置を失う。
+ * JS からならハッシュが見えるので「空のときだけ」を正しく判定できる。
+ *
+ * SPA のスクリプトより前(<head> 直後)に置く。後から実行すると Vue Router が
+ * 空ハッシュで初期化された後になり、画面がちらつく。
+ */
+function hashBootstrapTag(prefix) {
+  if (!prefix) return "";
+  const json = JSON.stringify(String(prefix));
+  return `<script>(function(){if(!location.hash){location.replace(location.pathname+"#/"+${json}+"/student_site/sign_in");}})();</script>`;
+}
+
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     const upstreamUrl = UPSTREAM_ORIGIN + url.pathname + url.search;
     const isStatic = isStaticAsset(url.pathname);
@@ -93,10 +135,24 @@ export default {
     const contentType = upstream.headers.get("content-type") || "";
     if (contentType.includes("text/html")) {
       const original = await upstream.text();
-      const injected = original.includes("</body>")
-        ? original.replace("</body>", INJECT_SCRIPT + "</body>")
-        : original + INJECT_SCRIPT;
-      respHeaders.delete("content-length"); // 長さが変わるので消す
+      const scriptTag = await easysmarkyScriptTag();
+      const bootstrap = hashBootstrapTag(env && env.SCHOOL_URL_PREFIX);
+
+      let injected = original;
+      // ブートストラップは SPA のスクリプトより前に置く必要がある。
+      if (bootstrap) {
+        injected = injected.includes("<head>")
+          ? injected.replace("<head>", "<head>" + bootstrap)
+          : bootstrap + injected;
+      }
+      injected = injected.includes("</body>")
+        ? injected.replace("</body>", scriptTag + "</body>")
+        : injected + scriptTag;
+
+      // 長さもエンコーディングも変わるので消す(元の content-encoding が残ると
+      // ブラウザが展開に失敗してページが壊れる)。
+      respHeaders.delete("content-length");
+      respHeaders.delete("content-encoding");
       return new Response(injected, {
         status: upstream.status,
         statusText: upstream.statusText,

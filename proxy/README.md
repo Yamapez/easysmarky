@@ -40,10 +40,32 @@ Cookie の domain 固定も無いので、丸ごと中継すれば別オリジ�
 - レスポンスの `Set-Cookie` から `Domain=` 属性を除去（本家ドメイン固定の Cookie が
   プロキシオリジンで拒否されるのを防ぐ）
 - `Content-Security-Policy` / `X-Frame-Options` を除去
-- `text/html`（SPA シェル）に easysmarky の userscript 版 `<script>` を注入
+- `text/html`（SPA シェル）に easysmarky を注入。スクリプトは**ワーカーがサーバー側で取得して
+  HTML に直接埋め込む**ので、閲覧しているブラウザは `yamapez.github.io` に一切アクセスしません
+  （学校のネットワークが外部ドメインを遮断していても動きます）
+- `SCHOOL_URL_PREFIX` を設定している場合、ハッシュが空のときだけログイン画面のハッシュを補う
+  小さなスクリプトを `<head>` に注入
 - `/js/` `/css/` などの静的アセットはエッジキャッシュ
 
 ## デプロイ手順
+
+### 1. 学校のURLプレフィックスを調べる
+
+本家 https://digi-repo.smarky.jp をブラウザで開き、**ログイン画面のアドレスバー**を見ます。
+
+```
+https://digi-repo.smarky.jp/#/XXXXX/student_site/sign_in
+                              ~~~~~ ここがプレフィックス
+```
+
+この `XXXXX` を [wrangler.toml](wrangler.toml) の `SCHOOL_URL_PREFIX` に設定してください。
+
+公式SPAはログインAPIに渡すプレフィックスを**URLのハッシュからしか読まない**ため、これを
+設定しないと、プロキシのルートURLを開いてログインしたときに
+**「ログインに失敗しました。URLが不正です。」**になります（設定しない場合は毎回
+`https://<worker>/#/XXXXX/student_site/sign_in` と手で打つ必要があります）。
+
+### 2. デプロイする
 
 [Wrangler](https://developers.cloudflare.com/workers/wrangler/) を使います。グローバル
 インストールは不要で、`npx` で実行できます（初回は自動でダウンロードされます）。
