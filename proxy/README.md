@@ -45,11 +45,17 @@ Cookie の domain 固定も無いので、丸ごと中継すれば別オリジ�
 
 ## デプロイ手順
 
-1. [Wrangler](https://developers.cloudflare.com/workers/wrangler/) をインストール（`npm i -g wrangler`）
-2. `cd proxy && wrangler login`
-3. `wrangler deploy`
-4. 表示された `*.workers.dev` のURL（または独自ドメイン）を開き、いつもどおり Smarky にログイン
-5. 右下に「easysmarky」ボタンが出れば成功
+[Wrangler](https://developers.cloudflare.com/workers/wrangler/) を使います。グローバル
+インストールは不要で、`npx` で実行できます（初回は自動でダウンロードされます）。
+
+```bash
+cd proxy
+npx wrangler login    # ブラウザが開くので Cloudflare アカウントで許可する
+npx wrangler deploy
+```
+
+デプロイすると `*.workers.dev` のURLが表示されます。そのURLを開き、いつもどおり Smarky に
+ログインしてください。右下に「easysmarky」ボタンが出れば成功です。
 
 独自ドメインで使いたい場合は [wrangler.toml](wrangler.toml) の `routes` を編集してください。
 URLは**推測されにくいもの**にし、可能なら Cloudflare Access などでアクセス制限をかけることを
