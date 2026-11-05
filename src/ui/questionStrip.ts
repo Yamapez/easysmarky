@@ -68,6 +68,22 @@ export function createQuestionStrip(opts: QuestionStripOptions): QuestionStripHa
     }
   }
 
+  // 左右キーで隣のチップへフォーカスを移す(Tab で全チップを巡るのは遅いため)。
+  // 選択(設問を開く)は Enter / Space に任せる。矢印で即座に開くと入力欄へ飛んでしまう。
+  el.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement) || !target.classList.contains("es-strip-chip")) return;
+    const ordered = [...chips.values()];
+    const index = ordered.indexOf(target);
+    if (index < 0) return;
+    const next = ordered[index + (event.key === "ArrowRight" ? 1 : -1)];
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+    next.scrollIntoView({ block: "nearest", inline: "center" });
+  });
+
   refresh();
 
   return {

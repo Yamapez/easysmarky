@@ -1,6 +1,7 @@
 import { OVERLAY_STYLES } from "./styles";
 import { renderSheetPicker, type SelectedSheet } from "./sheetPicker";
 import { renderFormView } from "./formView";
+import { describeApiError } from "../api/client";
 
 export interface EasySmarkyController {
   toggle: () => void;
@@ -27,6 +28,11 @@ export interface HeaderHandle {
   setTitle: (main: string, sub?: string) => void;
   /** 「閉じる」の左に置く任意のDOM(進捗バーなど)。null で消す */
   setStatus: (el: HTMLElement | null) => void;
+  /**
+   * 画面を離れる前(閉じる・戻る・Esc・再押下)に呼ばれる。false を返すと離れない。
+   * 未保存の入力がある画面が、確認なしで捨てられないようにするため。null で解除。
+   */
+  setLeaveGuard: (guard: (() => boolean) | null) => void;
 }
 
 const HOST_ID = "easysmarky-host";
@@ -42,8 +48,7 @@ function showError(container: HTMLElement, err: unknown, onRetry: () => void): v
   wrap.className = "es-column";
   const box = document.createElement("div");
   box.className = "es-error";
-  const message = err instanceof Error ? err.message : "不明なエラーが発生しました。";
-  box.textContent = `エラーが発生しました: ${message}\nSmarkyにログインした状態でお試しください。`;
+  box.textContent = `読み込めませんでした。\n${describeApiError(err).message}`;
   wrap.appendChild(box);
   const retryBtn = document.createElement("button");
   retryBtn.type = "button";
@@ -60,6 +65,12 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
   let content: HTMLElement;
   let header: HeaderHandle;
   let scrollLockBackup: { html: string; body: string } | null = null;
+  let leaveGuard: (() => boolean) | null = null;
+
+  /** 画面を離れてよいか。未保存の確認で「やめる」が選ばれたら false */
+  function canLeave(): boolean {
+    return leaveGuard ? leaveGuard() : true;
+  }
 
   function build(): void {
     // 既存ホストを拾い上げると shadow/content が未代入のまま start() に進んで例外になるため、
@@ -132,7 +143,9 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     closeBtn.type = "button";
     closeBtn.className = "es-close";
     closeBtn.textContent = "閉じる";
-    closeBtn.addEventListener("click", () => setVisible(false));
+    closeBtn.addEventListener("click", () => {
+      if (canLeave()) setVisible(false);
+    });
     actions.appendChild(closeBtn);
 
     headerRight.appendChild(actions);
@@ -140,8 +153,13 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     panel.appendChild(headerEl);
 
     let backHandler: (() => void) | null = null;
-    backBtn.addEventListener("click", () => backHandler?.());
+    backBtn.addEventListener("click", () => {
+      if (canLeave()) backHandler?.();
+    });
     header = {
+      setLeaveGuard(guard) {
+        leaveGuard = guard;
+      },
       setBack(handler, label = "← 科目一覧") {
         backHandler = handler;
         backBtn.textContent = label;
@@ -178,8 +196,8 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
           event.preventDefault();
           return;
         }
-        setVisible(false);
         event.preventDefault();
+        if (canLeave()) setVisible(false);
       },
       true,
     );
@@ -208,6 +226,7 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     header.setBack(null);
     header.setTitle("easysmarky");
     header.setStatus(null);
+    header.setLeaveGuard(null);
   }
 
   function showSheetPicker(): void {
@@ -245,6 +264,8 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
         return;
       }
       const isVisible = host.style.display !== "none";
+      // 表示中にもう一度押されたら閉じる扱いになるので、未保存の確認を通す
+      if (isVisible && !canLeave()) return;
       setVisible(!isVisible);
     },
   };

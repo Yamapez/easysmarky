@@ -183,6 +183,9 @@ const REPORT = {
 // fetch スタブ(保存はステートフル: 保存された answer_texts を REPORT に書き戻す)
 // ============================================================
 const POST_LOG = [];
+// 失敗の注入。次の1回だけ通信が落ちたように振る舞わせる(接続段階の失敗 = TypeError)
+//   saveNetwork: 保存の POST を落とす / verifyOnce: 保存後の再取得(照合)を落とす
+window.__esFail = { saveNetwork: false, verifyOnce: false };
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String(input);
@@ -193,6 +196,10 @@ window.fetch = async (input, init) => {
   if (url.startsWith("/api/student/student_sheet_list")) return json(SHEET_LIST);
 
   if (url.startsWith("/api/student/digital_report/save")) {
+    if (window.__esFail.saveNetwork) {
+      window.__esFail.saveNetwork = false;
+      throw new TypeError("Failed to fetch");
+    }
     const form = init && init.body;
     const entry = { zipBytes: null, fieldCount: 0, texts: [], error: null };
     try {
@@ -213,7 +220,13 @@ window.fetch = async (input, init) => {
     return json({ ok: true });
   }
 
-  if (url.startsWith("/api/student/digital_report")) return json(REPORT);
+  if (url.startsWith("/api/student/digital_report")) {
+    if (window.__esFail.verifyOnce) {
+      window.__esFail.verifyOnce = false;
+      throw new TypeError("Failed to fetch");
+    }
+    return json(REPORT);
+  }
   return realFetch(input, init);
 };
 
@@ -344,6 +357,32 @@ async function runAssertions() {
   const isTwoPane = matchMedia("(min-width: 900px)").matches;
 
   await sleep(300);
+
+  // --- 初回ヒント: 出る → 閉じる → 以後は保存されて出ない ---
+  // 閉じておかないと、以降の縦方向のレイアウト検査がヒントぶんずれる
+  results.steps.hint = { shownAtStart: qa(".es-hint").length === 1 };
+  q(".es-hint button")?.click();
+  await sleep(100);
+  results.steps.hint.hiddenAfterDismiss = qa(".es-hint").length === 0;
+  results.steps.hint.stored = localStorage.getItem("easysmarky:hint-dismissed") === "1";
+
+  // --- 開いただけ・今の向きを押し直しただけでは未保存にならない ---
+  const unloadNow = () => {
+    const ev = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+  results.steps.openState = {
+    status: (q(".es-save-status").textContent || "").trim(),
+    unloadPrevented: unloadNow(),
+  };
+  const activeDir = qa("button").find((b) => ["横書き", "縦書き"].includes(b.textContent) && b.classList.contains("active"));
+  activeDir?.click();
+  await sleep(100);
+  results.steps.samePressState = {
+    status: (q(".es-save-status").textContent || "").trim(),
+    unloadPrevented: unloadNow(),
+  };
 
   results.steps.initial = {
     twoPaneMediaQuery: isTwoPane,
@@ -590,10 +629,20 @@ async function runAssertions() {
 
   // --- 保存成功でこの端末のバックアップが消える(summary は残ってよい) ---
   results.steps.backupAfterSave = {
-    keys: Object.keys(localStorage).filter((k) => k.startsWith("easysmarky:") && !k.includes(":summary:")),
+    // 下書きのバックアップだけを数える(要約と初回ヒントの表示済みフラグは対象外)
+    keys: Object.keys(localStorage).filter(
+      (k) => k.startsWith("easysmarky:") && !k.includes(":summary:") && !k.startsWith("easysmarky:hint-"),
+    ),
   };
 
-  // --- 編集を再開すると「保存済み」の表示が消える ---
+  // beforeunload は preventDefault されたときだけ確認が出る。その有無を見る
+  const unloadPrevented = () => {
+    const ev = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+
+  // --- 編集を再開すると「保存済み」が「未保存の変更あり」に変わる ---
   const statusBeforeEdit = (q(".es-save-status").textContent || "").trim();
   const taAfterSave = q("textarea.es-textarea");
   taAfterSave.value += "続きの文章。";
@@ -603,6 +652,98 @@ async function runAssertions() {
     before: statusBeforeEdit,
     after: (q(".es-save-status").textContent || "").trim(),
   };
+  // 未保存の間はタブを閉じる操作で確認を出す
+  results.steps.unloadDirty = unloadPrevented();
+
+  // --- 全設問が入ると完了の案内に変わる ---
+  // ここまでで ウ が埋まり、4/4 になっている
+  results.steps.allFilled = {
+    progress: (q(".es-progress-count").textContent || "").trim(),
+    saveNote: (q(".es-save-note").textContent || "").trim(),
+  };
+
+  // --- Alt+↵ は次の未入力へ。無ければ告知する(ボタンは無効化されていてもキーからは届く) ---
+  q("textarea.es-textarea").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", altKey: true, bubbles: true, composed: true }),
+  );
+  await sleep(200);
+  const toastAlt = q(".es-toast");
+  results.steps.altEnter = { toastText: toastAlt ? toastAlt.textContent : null };
+
+  // --- 最後の設問で進もうとしたら、動けないことを告げる ---
+  // 現在は ウ。Ctrl+↵ で最後の編集可能な設問 オ へ、もう一度押すと告知になる
+  q("textarea.es-textarea").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
+  );
+  await sleep(300);
+  const editorAtLast = (q(".es-editor-name").textContent || "").trim();
+  q("textarea.es-textarea").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
+  );
+  await sleep(200);
+  const toastEnd = q(".es-toast");
+  results.steps.edgeEnd = {
+    editorAtLast,
+    toastText: toastEnd ? toastEnd.textContent : null,
+  };
+
+  // --- 設問チップは左右キーで隣へフォーカスを移す(開くのは Enter / Space に任せる) ---
+  const chipList = qa(".es-strip-chip");
+  const editorBeforeArrow = (q(".es-editor-name").textContent || "").trim();
+  chipList[0].focus();
+  chipList[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, composed: true }));
+  await sleep(100);
+  results.steps.stripArrow = {
+    focusedIsSecond: shadow().activeElement === chipList[1],
+    editorUnchanged: (q(".es-editor-name").textContent || "").trim() === editorBeforeArrow,
+  };
+
+  // --- 保存が通信で落ちる → 理由と「入力はこの端末に残っている」を出す ---
+  window.__esFail.saveNetwork = true;
+  visible(".es-save-btn").click();
+  await waitFor(() => (q(".es-save-status").textContent || "").includes("保存に失敗"), "network save fail", 8000);
+  await sleep(200);
+  results.steps.saveNetworkFail = {
+    status: q(".es-save-status").textContent,
+    notice: q(".es-error") ? q(".es-error").textContent : "",
+    unloadStillPrevented: unloadPrevented(),
+  };
+
+  // --- 送信は通ったが照合の再取得が落ちる → 「反映を確認できなかった」と言い、確認済みとは言わない ---
+  window.__esFail.verifyOnce = true;
+  visible(".es-save-btn").click();
+  await waitFor(() => (q(".es-save-status").textContent || "").includes("反映を確認できませんでした"), "verify fail", 8000);
+  await sleep(200);
+  results.steps.verifyFail = {
+    status: q(".es-save-status").textContent,
+    postCountAfterVerifyFail: POST_LOG.length,
+  };
+
+  // --- 通常の保存で回復すると「保存済み」に戻り、離脱の確認も出なくなる ---
+  visible(".es-save-btn").click();
+  await waitFor(() => (q(".es-save-status").textContent || "").includes("保存済み"), "recovered save", 8000);
+  await sleep(200);
+  results.steps.saveRecovered = {
+    status: q(".es-save-status").textContent,
+    unloadStillPrevented: unloadPrevented(),
+  };
+
+  // --- 送信中に編集が入っても、送った内容どおりに照合する(誤った不一致にしない) ---
+  // 保存ボタンの直後(同じタスク内)に追記する。送信内容は組み立て済みなので、
+  // 保存は成功し、追記ぶんは未保存のまま残るのが正しい
+  visible(".es-save-btn").click();
+  const taInFlight = q("textarea.es-textarea");
+  taInFlight.value += "送信中の追記。";
+  taInFlight.dispatchEvent(new Event("input", { bubbles: true }));
+  await waitFor(() => {
+    const t = q(".es-save-status").textContent || "";
+    return t && !t.includes("保存中");
+  }, "in-flight save", 8000);
+  await sleep(200);
+  results.steps.inFlightEdit = {
+    status: q(".es-save-status").textContent,
+    notice: q(".es-error") ? q(".es-error").textContent : "",
+  };
 
   // --- 背景スクロールのロック ---
   results.steps.scrollLock = {
@@ -610,7 +751,37 @@ async function runAssertions() {
     body: document.body.style.overflow,
   };
 
-  // --- Esc で閉じる(1回目は入力欄からフォーカスを外すだけ、2回目で閉じる) ---
+  // --- 未保存のまま閉じる操作は確認を通す(確認でやめれば閉じない、OKなら閉じる) ---
+  // 確認ダイアログはヘッドレスで CDP を止めてしまうので window.confirm を差し替えて判定する
+  const confirmCalls = [];
+  window.__esConfirmAnswer = false;
+  window.confirm = (msg) => {
+    confirmCalls.push(String(msg));
+    return window.__esConfirmAnswer;
+  };
+  const taDirty = q("textarea.es-textarea");
+  taDirty.value += "確認用の追記。";
+  taDirty.dispatchEvent(new Event("input", { bubbles: true }));
+  await sleep(150);
+
+  // 「閉じる」と「← 科目一覧」も、未保存なら確認を通す(やめれば、そのまま留まる)
+  const hostBtnCheck = document.getElementById("easysmarky-host");
+  q(".es-close").click();
+  await sleep(100);
+  const closeDeclined = {
+    confirmCount: confirmCalls.length,
+    hostVisible: hostBtnCheck.style.display !== "none",
+  };
+  q(".es-header-back").click();
+  await sleep(100);
+  results.steps.leaveButtons = {
+    close: closeDeclined,
+    backConfirmCount: confirmCalls.length - closeDeclined.confirmCount,
+    stillOnForm: !!q(".es-form"),
+  };
+  confirmCalls.length = 0;
+
+  // --- Esc で閉じる(1回目は入力欄からフォーカスを外すだけ) ---
   // 必ず最後に置く(閉じるとこの先の操作ができなくなるため)
   const hostEl = document.getElementById("easysmarky-host");
   const taEsc = q("textarea.es-textarea");
@@ -621,13 +792,23 @@ async function runAssertions() {
   await sleep(100);
   const activeIsTextareaAfterFirst = shadow().activeElement === taEsc;
   const hostVisibleAfterFirst = hostEl.style.display !== "none";
+  // 2回目: 未保存なので確認が出て、やめたら閉じない
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await sleep(100);
+  const confirmCountDeclined = confirmCalls.length;
+  const hostVisibleAfterDeclined = hostEl.style.display !== "none";
+  // 3回目: 確認でOKすると閉じる
+  window.__esConfirmAnswer = true;
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   await sleep(100);
   results.steps.escClose = {
     activeIsTextareaBefore,
     activeIsTextareaAfterFirst,
     hostVisibleAfterFirst,
-    hostVisibleAfterSecond: hostEl.style.display !== "none",
+    confirmCountDeclined,
+    hostVisibleAfterDeclined,
+    confirmMessage: confirmCalls[0] || "",
+    hostVisibleAfterConfirmed: hostEl.style.display !== "none",
   };
 
   return results;

@@ -355,9 +355,42 @@ function assertAll(label, r, viewportWidth) {
   check(`${label}: 保存成功でこの端末の下書きバックアップが消える`,
     Array.isArray(s.backupAfterSave.keys) && s.backupAfterSave.keys.length === 0,
     s.backupAfterSave);
-  check(`${label}: 編集を再開すると「保存済み」の表示が消える`,
-    s.statusClearOnEdit.before.length > 0 && s.statusClearOnEdit.after === "",
+  check(`${label}: 編集を再開すると「保存済み」が「未保存」に変わる`,
+    s.statusClearOnEdit.before.includes("反映を確認") && s.statusClearOnEdit.after.includes("未保存"),
     s.statusClearOnEdit);
+  check(`${label}: 未保存の間はタブを閉じる操作で確認が出る`,
+    s.unloadDirty === true, s.unloadDirty);
+  check(`${label}: 全設問が入ると保存バーに提出の案内が出る`,
+    s.allFilled.progress === "入力済み 4/4" && s.allFilled.saveNote.includes("全設問の入力が済みました"),
+    s.allFilled);
+  check(`${label}: Alt+↵ で未入力が無いと告知する`,
+    (s.altEnter.toastText || "").includes("未入力の設問はありません"), s.altEnter);
+  check(`${label}: 最後の設問で進もうとすると告知する`,
+    s.edgeEnd.editorAtLast.includes("オ") && (s.edgeEnd.toastText || "").includes("最後の設問"),
+    s.edgeEnd);
+  check(`${label}: 設問チップは左右キーで隣へフォーカスが移る(開かない)`,
+    s.stripArrow.focusedIsSecond === true && s.stripArrow.editorUnchanged === true, s.stripArrow);
+  check(`${label}: 通信で保存に失敗したら、入力がこの端末に残っていると伝える`,
+    s.saveNetworkFail.status.includes("保存に失敗") &&
+    s.saveNetworkFail.notice.includes("通信") && s.saveNetworkFail.notice.includes("残っています"),
+    s.saveNetworkFail);
+  check(`${label}: 照合できなかったら「反映を確認できませんでした」と出し、確認済みとは言わない`,
+    s.verifyFail.status.includes("反映を確認できませんでした") && !s.verifyFail.status.includes("保存済み"),
+    s.verifyFail);
+  check(`${label}: 通常の保存で回復すると「保存済み」に戻り、離脱の確認も出なくなる`,
+    s.saveRecovered.status.includes("保存済み") && s.saveRecovered.unloadStillPrevented === false,
+    s.saveRecovered);
+  check(`${label}: 送信中に編集しても、送った内容で照合し、追記ぶんだけ未保存で残る`,
+    s.inFlightEdit.status.includes("未保存") && !s.inFlightEdit.status.includes("確認できませんでした") &&
+    !s.inFlightEdit.status.includes("一部の設問") && s.inFlightEdit.notice === "",
+    s.inFlightEdit);
+  check(`${label}: 開いただけ・今の向きを押し直しただけでは未保存にならない`,
+    s.openState.status === "" && s.openState.unloadPrevented === false &&
+    s.samePressState.status === "" && s.samePressState.unloadPrevented === false,
+    { open: s.openState, same: s.samePressState });
+  check(`${label}: 初回ヒントは出て、閉じると以後は保存されて出ない`,
+    s.hint.shownAtStart === true && s.hint.hiddenAfterDismiss === true && s.hint.stored === true,
+    s.hint);
   check(`${label}: 背景ページのスクロールがロックされる`,
     s.scrollLock.html === "hidden" && s.scrollLock.body === "hidden", s.scrollLock);
 
@@ -366,8 +399,16 @@ function assertAll(label, r, viewportWidth) {
     s.escClose.activeIsTextareaBefore === true && s.escClose.activeIsTextareaAfterFirst === false &&
     s.escClose.hostVisibleAfterFirst === true,
     s.escClose);
-  check(`${label}: Esc の2回目でオーバーレイを閉じる`,
-    s.escClose.hostVisibleAfterSecond === false, s.escClose);
+  check(`${label}: 未保存のまま Esc すると確認が出て、やめれば閉じない`,
+    s.escClose.confirmCountDeclined === 1 && s.escClose.hostVisibleAfterDeclined === true &&
+    s.escClose.confirmMessage.includes("保存されていない"),
+    s.escClose);
+  check(`${label}: 未保存のとき「閉じる」「← 科目一覧」も確認を通し、やめれば留まる`,
+    s.leaveButtons.close.confirmCount === 1 && s.leaveButtons.close.hostVisible === true &&
+    s.leaveButtons.backConfirmCount === 1 && s.leaveButtons.stillOnForm === true,
+    s.leaveButtons);
+  check(`${label}: 確認でOKすると閉じる`,
+    s.escClose.hostVisibleAfterConfirmed === false, s.escClose);
 }
 
 // ---------------------------------------------------------------- 実行

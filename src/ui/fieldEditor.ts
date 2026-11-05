@@ -368,6 +368,7 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   hints.innerHTML =
     "<span><kbd>Ctrl</kbd>+<kbd>↵</kbd>次の設問</span>" +
     "<span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↵</kbd>前の設問</span>" +
+    "<span><kbd>Alt</kbd>+<kbd>↵</kbd>次の未入力</span>" +
     "<span><kbd>Alt</kbd>+<kbd>↑↓</kbd>ページ送り</span>" +
     "<span><kbd>Ctrl</kbd>+<kbd>S</kbd>下書き保存</span>" +
     "<span><kbd>Esc</kbd>閉じる</span>";
@@ -409,11 +410,14 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   refreshToggle();
   refreshFit();
 
+  // 今の向きを押し直しただけなら変更ではない(未保存の表示や離脱の確認を誤って出さないため)
   horizBtn.addEventListener("click", () => {
+    if (field.direction === Direction.Horizon) return;
     field.direction = Direction.Horizon;
     onEdited();
   });
   vertBtn.addEventListener("click", () => {
+    if (field.direction === Direction.Vertical) return;
     field.direction = Direction.Vertical;
     onEdited();
   });
