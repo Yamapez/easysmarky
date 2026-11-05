@@ -627,6 +627,41 @@ export const OVERLAY_STYLES = `
   color: #7a848a;
 }
 
+/* ===== キーボード操作の見え方・初回ヒント ===== */
+/* 入力欄(textarea)は枠の代わりに box-shadow でフォーカスを示すので、ここではボタンとチップだけ */
+button:focus-visible,
+.es-strip-chip:focus-visible {
+  outline: 3px solid #2196c9;
+  outline-offset: 2px;
+}
+.es-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #b8dcef;
+  border-radius: 8px;
+  background: #eaf6fb;
+  color: #1e4f66;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.es-hint > div {
+  flex: 1 1 auto;
+}
+.es-hint button {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid #2196c9;
+  border-radius: 6px;
+  background: #fff;
+  color: #2196c9;
+  min-height: 32px;
+  font-family: inherit;
+}
+
 /* ===== 設問ストリップ ===== */
 .es-strip {
   flex: 0 0 auto;

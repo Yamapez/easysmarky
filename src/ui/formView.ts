@@ -80,7 +80,20 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   container.innerHTML = "";
 
   // ---------------------------------------------------------------- ヘッダ
+  // 未保存の変更があるか。サーバーに反映されたことを確認できるまでは true のまま
+  let dirty = false;
+  // 編集のたびに増やす。保存の送信中に編集が入ったかを見分けるために使う
+  let editSeq = 0;
+  // サーバーでの反映を照合できた最後の時刻
+  let serverSavedAt: number | null = null;
+
   opts.header.setBack(opts.onBack, "← 科目一覧");
+  opts.header.setLeaveGuard(() => {
+    if (!dirty) return true;
+    return window.confirm(
+      "保存されていない変更があります。\nこの端末には自動保存されていますが、Smarkyにはまだ反映されていません。\nこの画面を離れますか?",
+    );
+  });
   opts.header.setTitle(
     `${sheet.subjectName || report.subject_name} ／ 第${sheet.reportNo}回`,
     formatDeadline(sheet.stdDeadlineAt),
@@ -290,10 +303,33 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     const filled = fields.filter(isFilledField).length;
     progressCount.textContent = `入力済み ${filled}/${editableCount}`;
     progressFill.style.width = editableCount > 0 ? `${(filled / editableCount) * 100}%` : "0";
-    progressFill.classList.toggle("done", editableCount > 0 && filled >= editableCount);
+    const allFilled = editableCount > 0 && filled >= editableCount;
+    progressFill.classList.toggle("done", allFilled);
+    // 全部入れ終わったら、次にやること(保存して、提出は公式画面で)を案内する
+    saveNote.textContent = allFilled
+      ? "全設問の入力が済みました。下書き保存したら、提出は公式のSmarky画面から行ってください。"
+      : "提出は公式のSmarky画面から行ってください。";
 
     const noEmpty = nextEmptyId() === null;
     nextEmptyBtn.disabled = noEmpty;
+  }
+
+  /** 編集が入ったことを記録する。保存バーの表示は保存中でなければ直ちに更新する */
+  function markDirty(): void {
+    editSeq++;
+    dirty = true;
+    if (!saving) refreshSaveState();
+  }
+
+  /** 保存バーの状態表示。未保存の変更の有無と、最後にサーバーで確認できた時刻から決める */
+  function refreshSaveState(): void {
+    if (dirty) {
+      setSaveStatus("未保存の変更があります。下書き保存してください。", "#8a5a00");
+    } else if (serverSavedAt != null) {
+      setSaveStatus(`保存済み ${formatTime(serverSavedAt)}(サーバーで反映を確認しました)`, "#2e7d32");
+    } else {
+      setSaveStatus("", "");
+    }
   }
 
   function refreshStatusText(): void {
@@ -367,8 +403,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         strip.refresh();
         viewer.refreshRims();
         persistBackup();
-        // 「保存済み」の表示が居座って誤認させないよう、編集を再開したら消す
-        if (!saving) setSaveStatus("", "");
+        markDirty();
       },
     });
     editorBody.appendChild(editor.element);
@@ -416,7 +451,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       const current = focusId != null ? fields.findIndex((f) => f.raw.id === focusId) : -1;
       const next = Math.min(Math.max(current + delta, 0), fields.length - 1);
       focusField(fields[next].raw.id, { focusInput: true });
+      return;
     }
+    // 端に着いて動けない。キーで押しても何も起きないと壊れたように見えるので告げる
+    announce(delta > 0 ? "これが最後の設問です" : "これが最初の設問です");
   }
 
   // ---------------------------------------------------------------- お知らせ欄
@@ -462,6 +500,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       }
       restoreBar.remove();
       restoreBarEl = null;
+      // 復元した内容はサーバーに無い可能性があるので、保存するまで未保存扱いにする
+      markDirty();
       renderEditor();
       refreshProgress();
       strip.refresh();
@@ -474,6 +514,36 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     });
     notices.appendChild(restoreBar);
     restoreBarEl = restoreBar;
+  }
+
+  // 初回だけ操作の要点を出す。保存できない環境では毎回出て邪魔になるので出さない
+  const HINT_KEY = "easysmarky:hint-dismissed";
+  let hintDismissed = true;
+  try {
+    hintDismissed = localStorage.getItem(HINT_KEY) === "1";
+  } catch {
+    // 読めない環境では出さないままにする
+  }
+  if (!hintDismissed) {
+    const hint = document.createElement("div");
+    hint.className = "es-hint";
+    const hintText = document.createElement("div");
+    hintText.textContent =
+      "解答欄(枠)をタップすると入力を始められます。下の設問チップや ◀ ▶ で、ほかの設問へ移動できます。";
+    const dismissBtn = document.createElement("button");
+    dismissBtn.type = "button";
+    dismissBtn.textContent = "わかった";
+    dismissBtn.addEventListener("click", () => {
+      try {
+        localStorage.setItem(HINT_KEY, "1");
+      } catch {
+        // 保存できなくても、この画面では消すだけにする
+      }
+      hint.remove();
+    });
+    hint.appendChild(hintText);
+    hint.appendChild(dismissBtn);
+    notices.appendChild(hint);
   }
 
   // ---------------------------------------------------------------- 保存
@@ -521,6 +591,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     saveBtn.disabled = true;
     saveNotice?.remove();
     saveNotice = null;
+    // 送信の時点で組み立てた内容が保存対象。ここより後の編集は次の保存に回る
+    const seqAtStart = editSeq;
     setSaveStatus("保存中...", "#7a848a");
     try {
       const result = await saveDraft({
@@ -532,19 +604,35 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         verifyQuery: query,
       });
       if (!result.ok) {
-        const message = result.blockedReason ?? (result.errors ?? ["保存に失敗しました。"]).join("\n");
+        // 入力はこの端末に残っている。失敗の理由と、次に何をすればよいかを併せて示す
+        let message = result.blockedReason ?? (result.errors ?? ["保存に失敗しました。"]).join("\n");
+        if (!result.blockedReason) {
+          message += "\n入力内容はこの端末に残っています。";
+        }
         setSaveStatus("保存に失敗しました。", "#a02622");
         showSaveNotice(message, []);
       } else if (result.mismatchedFieldIds && result.mismatchedFieldIds.length > 0) {
+        // 反映が確認できていないので、未保存扱いのまま離脱時に確認を出す
+        dirty = true;
         const message = `保存はされましたが、一部の設問(${result.mismatchedFieldIds.length}件)の反映が確認できませんでした。公式画面で内容をご確認ください。`;
         setSaveStatus(message, "#a02622");
         showSaveNotice(message, result.mismatchedFieldIds);
+      } else if (!result.verified) {
+        // 送信は通ったが照合できなかった。「確認済み」とは言わず、未確認のまま残す
+        dirty = true;
+        const message = "保存は完了しましたが、サーバーで反映を確認できませんでした。公式画面で内容をご確認ください。";
+        setSaveStatus(message, "#a02622");
+        showSaveNotice(message, []);
       } else {
-        setSaveStatus("保存済み(サーバーで反映を確認しました)。", "#2e7d32");
-        // サーバー側と揃ったので、この端末のバックアップと復元バーはもう不要
-        clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
-        restoreBarEl?.remove();
-        restoreBarEl = null;
+        serverSavedAt = Date.now();
+        dirty = editSeq !== seqAtStart;
+        if (!dirty) {
+          // サーバー側と揃ったので、この端末のバックアップと復元バーはもう不要
+          clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
+          restoreBarEl?.remove();
+          restoreBarEl = null;
+        }
+        refreshSaveState();
       }
     } catch {
       const message = "予期せぬエラーが発生しました。通信状況をご確認のうえ再度お試しください。";
@@ -567,7 +655,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   function goToNextEmpty(): void {
     const next = nextEmptyField();
-    if (!next) return;
+    if (!next) {
+      // ボタンは無効化されているが、Alt+Enter からは届くので無反応にしない
+      announce("未入力の設問はありません。下書き保存できます。");
+      return;
+    }
     focusField(next.id, { focusInput: true });
     if (next.wrapped) announce("先頭に戻りました(この先に未入力はありません)");
   }
@@ -581,6 +673,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       return;
     }
     if (form.getClientRects().length === 0) return; // オーバーレイ非表示中
+    // 日本語入力の変換中のキーは、確定操作として入力欄に任せる
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.altKey && event.key === "Enter") {
+      event.preventDefault();
+      goToNextEmpty();
+      return;
+    }
     if (event.ctrlKey || event.metaKey) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -597,6 +696,19 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     }
   }
   window.addEventListener("keydown", onKeyDown, true);
+
+  // 未保存のままタブを閉じる・ページを離れるときは、ブラウザの確認を出す。
+  // 一覧に戻って form が捨てられたら、次の呼び出しで自分で外れる。
+  function onBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!form.isConnected) {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      return;
+    }
+    if (!dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  }
+  window.addEventListener("beforeunload", onBeforeUnload);
 
   // ---------------------------------------------------------------- 初期表示
   const firstEditable = fields.find(isEditable) ?? fields[0];
