@@ -1,4 +1,6 @@
 import { toImageSrc } from "./cropPreview";
+import type { SheetRect } from "../model/readingWindow";
+import type { SheetSize } from "../model/sheetGeometry";
 
 /** ビューアに表示するページ画像の種別 */
 export type PageSource = "question" | "answer";
@@ -44,6 +46,16 @@ export interface PageViewerOptions {
   initialIndex?: number;
   /** 最初に見せたい位置(画像に対する割合。x は水平中心、y は上端)。読み込み後にスクロールする */
   focus?: { x: number; y: number };
+  /**
+   * 指定すると、ページごとに「ここだけ見せる」窓を返す(読むモードの設問まわり表示)。
+   * rect は解答用紙の座標系、sheet はその用紙の大きさ。null を返したページは全体を表示する。
+   * 窓は表示だけの切り出しで、保存される画像や座標には影響しない。
+   */
+  cropTo?: (source: PageSource, index: number) => { rect: SheetRect; sheet: SheetSize } | null;
+  /** 窓表示の初期状態。既定は on(cropTo があるときだけ効く) */
+  cropOn?: boolean;
+  /** 描画のたびに、いま表示している種別・ページを知らせる(窓ボタンの押下状態を実際の表示に合わせるため) */
+  onRender?: (state: { source: PageSource; index: number }) => void;
 }
 
 export interface PageViewerHandle {
@@ -95,6 +107,8 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   let activeFieldId: number | null = null;
   /** showField() が要求した「まだ見せられていない」設問。画像の読み込み完了後にパンする */
   let pendingFocusId: number | null = null;
+  /** 窓表示のON/OFF。cropTo が無ければ常に全体。切り替えは組み直し(呼び出し側)で行う */
+  const cropOn = opts.cropOn ?? true;
 
   const el = document.createElement("div");
   el.className = "es-viewer";
@@ -309,7 +323,38 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     } else {
       img.removeAttribute("src");
     }
+    applyCrop();
     renderRims();
+    opts.onRender?.({ source, index });
+  }
+
+  /**
+   * 窓表示のとき、画像のうち切り出し範囲だけが canvas いっぱいに来るよう配置する。
+   * 範囲の比率を canvas の縦横比にし、画像は用紙の大きさに対する百分率で絶対配置する
+   * (枠と同じ考え方なので、ズームしてもずれない)。画像は引き伸ばしだけで、保存には関係しない。
+   */
+  function applyCrop(): void {
+    const crop = cropOn && opts.cropTo ? opts.cropTo(source, index) : null;
+    if (!crop || crop.rect.width <= 0 || crop.rect.height <= 0) {
+      canvas.classList.remove("is-cropped");
+      canvas.style.aspectRatio = "";
+      img.style.cssText = "";
+      return;
+    }
+    const { rect, sheet } = crop;
+    canvas.classList.add("is-cropped");
+    canvas.style.aspectRatio = `${rect.width} / ${rect.height}`;
+    // 窓は縦横どちらも画面に収める(縦長の窓が画面の高さを超えないように)。
+    // 倍率1は「窓が画面に収まる最大」で、そこから拡大すると scroll する。
+    // 高さの基準は .es-reader の scroll に container-type: size を当てた cqh(style.css 側)
+    // 倍率1で「幅・高さの両方に収まる最大」になり、倍率を上げるとその分だけ大きくなる
+    canvas.style.width = `calc(${zoomScale} * min(100cqw, ${(rect.width / rect.height) * 100}cqh))`;
+    img.style.position = "absolute";
+    img.style.maxWidth = "none";
+    img.style.width = `${(sheet.width / rect.width) * 100}%`;
+    img.style.height = `${(sheet.height / rect.height) * 100}%`;
+    img.style.left = `${-(rect.x / rect.width) * 100}%`;
+    img.style.top = `${-(rect.y / rect.height) * 100}%`;
   }
 
   function goTo(nextSource: PageSource, nextIndex: number): void {

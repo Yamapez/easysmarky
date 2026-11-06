@@ -14,7 +14,15 @@ import {
 } from "../storage/backup";
 import { createFieldEditor, fieldLabel, fieldShortLabel, type FieldEditorHandle } from "./fieldEditor";
 import type { HeaderHandle } from "./overlay";
-import { createPageViewer, pageArrayIndex, ZOOM_STEPS, type RimFieldInfo } from "./pageViewer";
+import { readingWindowRect } from "../model/readingWindow";
+import {
+  createPageViewer,
+  pageArrayIndex,
+  type PageSource,
+  type PageViewerHandle,
+  ZOOM_STEPS,
+  type RimFieldInfo,
+} from "./pageViewer";
 import { createQuestionStrip, type StripItem } from "./questionStrip";
 import type { SelectedSheet } from "./sheetPicker";
 
@@ -274,27 +282,24 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   function openReader(): void {
     if (reader) return;
-    // 画面幅に応じて、本文が読める幅(約1100px)になる最小の倍率から始める
-    const initialZoom =
+    // 画面幅に応じて、本文が読める幅(約1100px)になる最小の倍率から始める(全体表示のとき)
+    const fullZoom =
       ZOOM_STEPS.find((s) => window.innerWidth * s >= READ_TARGET_WIDTH) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
-    // 今いるページと、選んでいる設問の枠の位置から読み始める(解答用紙を見ていて、設問がそのページにあるとき)
-    const pageIndex = viewer.currentIndex();
-    const sourceNow = viewer.currentSource();
     const current = focusId != null ? fieldById.get(focusId) : undefined;
-    const sheetNow = sourceNow === "answer" ? answerPageSizeByIndex(report.base_sheet, pageIndex) : null;
-    let focus: { x: number; y: number } | undefined;
-    if (current && sheetNow && pageArrayIndex(answerImages, current.raw.page) === pageIndex) {
-      const [x, y, w] = current.raw.rim;
-      focus = { x: (x + w / 2) / sheetNow.width, y: y / sheetNow.height };
-    }
-    const readerViewer = createPageViewer({
-      questionImages,
-      answerImages,
-      initialZoom,
-      initialSource: sourceNow,
-      initialIndex: pageIndex,
-      focus,
-    });
+    // 窓表示: 選んでいる設問の解答欄の右側(縦書きの問題文)まわりだけを見せる。
+    // その設問のある解答用紙ページにだけ効き、ほかのページは全体を出す
+    const cropTo = current
+      ? (source: PageSource, index: number) => {
+          if (source !== "answer") return null;
+          if (pageArrayIndex(answerImages, current.raw.page) !== index) return null;
+          const sheet = answerPageSizeByIndex(report.base_sheet, index);
+          if (!sheet) return null;
+          const rect = readingWindowRect(current.raw.rim, sheet);
+          // 用紙の外にあって空になる窓は出さない(表示側の判定と食い違わないよう、ここで決める)
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          return { rect, sheet };
+        }
+      : undefined;
 
     const el = document.createElement("div");
     el.className = "es-reader";
@@ -303,6 +308,64 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     el.setAttribute("aria-label", "ページの全画面表示");
     const head = document.createElement("div");
     head.className = "es-reader-head";
+
+    // 今いるページから読み始める(解答用紙を見ていて、設問がそのページにあるとき)
+    let pos: { source: PageSource; index: number } = { source: viewer.currentSource(), index: viewer.currentIndex() };
+    let cropOn = cropTo != null;
+    let readerViewer: PageViewerHandle | null = null;
+
+    /**
+     * 表示を組み直す。窓表示は設問の周りだけを画面幅に収めて出し、全体表示は開いた時点と同じ
+     * 倍率・位置(設問の解答欄が見える位置)に戻す。どちらも同じ経路で作るので、切り替えても挙動がずれない。
+     */
+    function mountViewer(): void {
+      const windowApplies = cropOn && cropTo != null && cropTo(pos.source, pos.index) != null;
+      const sheetAt = pos.source === "answer" ? answerPageSizeByIndex(report.base_sheet, pos.index) : null;
+      let focus: { x: number; y: number } | undefined;
+      if (!windowApplies && current && sheetAt && pageArrayIndex(answerImages, current.raw.page) === pos.index) {
+        const [x, y, w] = current.raw.rim;
+        focus = { x: (x + w / 2) / sheetAt.width, y: y / sheetAt.height };
+      }
+      const next = createPageViewer({
+        questionImages,
+        answerImages,
+        // 窓は設問の周りだけなので、画面に収まる倍率(1)から始める。全体表示は読める幅の倍率
+        initialZoom: windowApplies ? 1 : fullZoom,
+        initialSource: pos.source,
+        initialIndex: pos.index,
+        focus,
+        cropTo,
+        cropOn,
+        onRender: syncToggle,
+      });
+      if (readerViewer) {
+        readerViewer.element.replaceWith(next.element);
+      } else {
+        el.appendChild(next.element);
+      }
+      readerViewer = next;
+    }
+
+    let toggle: HTMLButtonElement | null = null;
+    /** 押下中 = いま窓が見えている(設問のないページでは窓が出ないので押下にならない) */
+    function syncToggle(state: { source: PageSource; index: number }): void {
+      if (!toggle || !cropTo) return;
+      const showing = cropOn && cropTo(state.source, state.index) != null;
+      toggle.setAttribute("aria-pressed", String(showing));
+    }
+    if (cropTo) {
+      // 押すと、選んでいる設問まわりだけ/ページ全体、を切り替える
+      toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "es-reader-toggle";
+      toggle.textContent = "設問まわり";
+      toggle.addEventListener("click", () => {
+        if (readerViewer) pos = { source: readerViewer.currentSource(), index: readerViewer.currentIndex() };
+        cropOn = !cropOn;
+        mountViewer();
+      });
+      head.appendChild(toggle);
+    }
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.textContent = "閉じる";
@@ -310,7 +373,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     closeBtn.addEventListener("click", closeReader);
     head.appendChild(closeBtn);
     el.appendChild(head);
-    el.appendChild(readerViewer.element);
+    mountViewer();
+
     // 開いた側のボタンを覚えておき、閉じたら戻す。開いた直後は閉じるボタンへ移す
     readerOpener = (form.getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null;
     form.appendChild(el);

@@ -411,6 +411,80 @@ function assertAll(label, r, viewportWidth) {
     s.escClose.hostVisibleAfterConfirmed === false, s.escClose);
 }
 
+// ---------------------------------------------------------------- 読むモード(縦長の窓)
+// 縦長の解答欄(問5・右側に縦書きの問題文がある想定)で、窓が画面の内側に収まり、
+// 解答欄を含み、解答欄の右側(左より)広く取られていることを確かめる
+async function assertReaderWindowVertical(send, label, viewportWidth) {
+  const r = await evalJs(send, `(async () => {
+    const host = document.getElementById("easysmarky-host");
+    const root = host.shadowRoot;
+    const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+    const pane = root.querySelector(".es-pane-question");
+    const answerTab = [...pane.querySelectorAll(".es-viewer-tabs button")].find((b) => b.textContent === "解答用紙");
+    answerTab?.click();
+    await wait(50);
+    // 枠は表示中のページにしか出ない。問5は2ページ目にあるので、そこへ送る
+    if (!pane.querySelector('.es-rim[data-field-id="5"]')) {
+      pane.querySelector('button[aria-label="次のページ"]')?.click();
+      await wait(100);
+    }
+    pane.querySelector('.es-rim[data-field-id="5"]')?.click();
+    await wait(200);
+    const rimEl = pane.querySelector('.es-rim[data-field-id="5"]');
+    root.querySelector('button[aria-label="ページを全画面で読む"]').click();
+    await wait(100);
+    const reader = root.querySelector(".es-reader");
+    const img = reader?.querySelector(".es-viewer-img");
+    if (img && !(img.complete && img.naturalWidth > 0)) {
+      await new Promise((res) => img.addEventListener("load", res, { once: true }));
+    }
+    await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+    const canvas = reader?.querySelector(".es-viewer-canvas");
+    const sc = reader?.querySelector(".es-viewer-scroll");
+    const mc = pane.querySelector(".es-viewer-canvas");
+    if (!rimEl || !canvas || !sc || !img || !mc) return null;
+    const ar = rimEl.getBoundingClientRect();
+    const m = mc.getBoundingClientRect();
+    const ir = img.getBoundingClientRect();
+    const c = canvas.getBoundingClientRect();
+    const s = sc.getBoundingClientRect();
+    // 解答欄の端を、画像上の位置に換算する(窓の外でも値は出る。窓に入っているかはここで判定する)
+    const xL = ir.left + ((ar.left - m.left) / m.width) * ir.width;
+    const xR = ir.left + ((ar.right - m.left) / m.width) * ir.width;
+    const yT = ir.top + ((ar.top - m.top) / m.height) * ir.height;
+    const yB = ir.top + ((ar.bottom - m.top) / m.height) * ir.height;
+    const out = {
+      cropped: canvas.classList.contains("is-cropped"),
+      fitsViewport: c.width <= s.width + 1 && c.height <= s.height + 1,
+      rimInWindow: xL >= c.left - 1 && xR <= c.right + 1 && yT >= c.top - 1 && yB <= c.bottom + 1,
+      roomLeft: xL - c.left,
+      roomRight: c.right - xR,
+      canvas: [Math.round(c.width), Math.round(c.height)],
+      scroll: [Math.round(s.width), Math.round(s.height)],
+    };
+    // 確認用に残す(窓の見え方を目で見る)
+    return out;
+  })()`);
+  check(`${label}: 縦長の解答欄でも窓が画面に収まり、解答欄を含む`,
+    r?.cropped === true && r.fitsViewport === true && r.rimInWindow === true, r);
+  check(`${label}: 窓は解答欄の右側に広く、左は狭く取られる(縦書きの問題文が右にある想定)`,
+    r != null && r.roomRight > r.roomLeft, r);
+  // 窓の中でも ＋ で拡大できる(縦長だと高さの上限に当たって大きさが変わらない、というのを防ぐ)
+  const zoomed = await evalJs(send, `(async () => {
+    const root = document.getElementById("easysmarky-host").shadowRoot;
+    const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+    const before = root.querySelector(".es-reader .es-viewer-canvas")?.getBoundingClientRect().width ?? null;
+    root.querySelector('.es-reader button[aria-label="拡大"]')?.click();
+    await wait(80);
+    const after = root.querySelector(".es-reader .es-viewer-canvas")?.getBoundingClientRect().width ?? null;
+    return { before, after };
+  })()`);
+  check(`${label}: 窓の中の ＋ で大きさが段階どおり大きくなる(1 → 1.5 倍)`,
+    zoomed?.before > 0 && zoomed.after > zoomed.before * 1.4 && zoomed.after < zoomed.before * 1.6, zoomed);
+  await screenshot(send, `reader-window-vertical-${viewportWidth}.png`);
+  await evalJs(send, `document.getElementById("easysmarky-host").shadowRoot.querySelector(".es-reader-head button:not(.es-reader-toggle)").click()`);
+}
+
 // ---------------------------------------------------------------- 読むモード
 // 解答用紙を枠なしで全画面に開く。上のビューアとは独立し、閉じても元の表示を壊さない。
 // 幅に応じた初期倍率(約1100px幅になる最小の段階)で始まることも確かめる
@@ -460,19 +534,31 @@ async function assertReader(send, label, viewportWidth) {
     const mainCanvas = pane.querySelector(".es-viewer-canvas");
     const readerCanvas = reader ? reader.querySelector(".es-viewer-canvas") : null;
     const readerScroll = reader ? reader.querySelector(".es-viewer-scroll") : null;
+    const readerImgEl = reader ? reader.querySelector(".es-viewer-img") : null;
     out.hadActive = !!activeRim;
     out.focusVisible = null;
-    if (activeRim && mainCanvas && readerCanvas && readerScroll) {
+    out.windowPressedOpen = reader?.querySelector(".es-reader-toggle")?.getAttribute("aria-pressed") === "true";
+    out.windowCropped = readerCanvas?.classList.contains("is-cropped") ?? null;
+    out.rimInWindow = null;
+    // 窓は縦横比が横長なので幅いっぱいで収まる(倍率1)。描画された幅で確かめる(style の文字列には依存しない)
+    out.windowFillsWidth = readerCanvas && readerScroll
+      ? Math.abs(readerCanvas.getBoundingClientRect().width - readerScroll.getBoundingClientRect().width) < 2
+      : null;
+    if (activeRim && mainCanvas && readerCanvas && readerScroll && readerImgEl) {
       const ar = activeRim.getBoundingClientRect();
       const mc = mainCanvas.getBoundingClientRect();
       // 枠の中心を、用紙画像に対する割合で表す(主ビューアと読むモードで同じ用紙なので共通)
       const fx = (ar.left + ar.width / 2 - mc.left) / mc.width;
       const fy = (ar.top - mc.top) / mc.height;
+      // 窓表示では canvas は切り出した範囲しか映らないので、位置は画像そのものの矩形で換算する
+      const ir = readerImgEl.getBoundingClientRect();
+      const px = ir.left + fx * ir.width;
+      const py = ir.top + fy * ir.height;
       const rc = readerCanvas.getBoundingClientRect();
       const sc = readerScroll.getBoundingClientRect();
-      const px = rc.left + fx * rc.width;
-      const py = rc.top + fy * rc.height;
       out.focusVisible = px >= sc.left && px <= sc.right && py >= sc.top && py <= sc.bottom;
+      // 窓表示なら、選んでいる設問の枠が窓(canvas)の中に入っていること
+      out.rimInWindow = px >= rc.left && px <= rc.right && py >= rc.top && py <= rc.bottom;
     }
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
@@ -482,21 +568,54 @@ async function assertReader(send, label, viewportWidth) {
     out.hostVisibleAfterEsc = host.style.display !== "none";
     out.mainAfterEsc = snapshot(pane);
 
+    // 選んでいる枠が、読むモードの画像上で見える範囲に入っているか(窓表示でも全体表示でも同じ換算で測る)
+    const probeVisible = () => {
+      const rimNow = pane.querySelector(".es-rim.active");
+      const im = root.querySelector(".es-reader .es-viewer-img");
+      const scr = root.querySelector(".es-reader .es-viewer-scroll");
+      const mcv = pane.querySelector(".es-viewer-canvas");
+      if (!rimNow || !im || !scr || !mcv) return null;
+      const ar2 = rimNow.getBoundingClientRect();
+      const mc2 = mcv.getBoundingClientRect();
+      const fx2 = (ar2.left + ar2.width / 2 - mc2.left) / mc2.width;
+      const fy2 = (ar2.top - mc2.top) / mc2.height;
+      const ir2 = im.getBoundingClientRect();
+      const s2 = scr.getBoundingClientRect();
+      const px2 = ir2.left + fx2 * ir2.width;
+      const py2 = ir2.top + fy2 * ir2.height;
+      return px2 >= s2.left && px2 <= s2.right && py2 >= s2.top && py2 <= s2.bottom;
+    };
+    // 開き直して「設問まわり」を切ると、開いた時点の全体表示(倍率・位置)に戻り、閉じるボタンで閉じられる
     root.querySelector('button[aria-label="ページを全画面で読む"]').click();
     await wait(50);
-    root.querySelector(".es-reader-head button").click();
+    const tog = root.querySelector(".es-reader .es-reader-toggle");
+    out.windowPressedOnReopen = tog?.getAttribute("aria-pressed") === "true";
+    tog?.click();
+    await wait(150);
+    out.windowOffCropped = root.querySelector(".es-reader .es-viewer-canvas")?.classList.contains("is-cropped") ?? null;
+    out.windowOffPressed = root.querySelector(".es-reader .es-reader-toggle")?.getAttribute("aria-pressed") ?? null;
+    out.offZoom = root.querySelector(".es-reader .es-viewer-canvas")?.style.width ?? null;
+    out.offFocusVisible = probeVisible();
+    root.querySelector(".es-reader-head button:not(.es-reader-toggle)").click();
     await wait(50);
     out.closedByButton = !root.querySelector(".es-reader");
     return out;
   })()`);
 
-  const expectedZoom = `${([1, 1.5, 2, 3, 4].find((s) => viewportWidth * s >= 1100) ?? 4) * 100}%`;
+  check(`${label}: 読むモードは選んでいる設問のまわりの窓で始まる`,
+    r.windowPressedOpen === true && r.windowCropped === true && r.rimInWindow === true,
+    { pressed: r.windowPressedOpen, cropped: r.windowCropped, rimInWindow: r.rimInWindow });
+  check(`${label}: 「設問まわり」を切ると全体に戻り、開いた時点の倍率・位置になる`,
+    r.windowPressedOnReopen === true && r.windowOffCropped === false && r.windowOffPressed === "false"
+      && r.offZoom === `${([1, 1.5, 2, 3, 4].find((s) => viewportWidth * s >= 1100) ?? 4) * 100}%`
+      && r.offFocusVisible === true,
+    { reopenPressed: r.windowPressedOnReopen, offCropped: r.windowOffCropped, offPressed: r.windowOffPressed, offZoom: r.offZoom, offFocusVisible: r.offFocusVisible });
   check(`${label}: 読むボタンで全画面の読むモードが開く`, r.opened === true, r);
   check(`${label}: 読むモードには解答欄の枠を出さない`, r.rimCount === 0, r.rimCount);
   check(`${label}: 読むモードは今の種別・ページから始まる`,
     r.reader?.tab === "解答用紙" && r.reader?.count === r.mainBefore.count, { reader: r.reader, main: r.mainBefore });
-  check(`${label}: 読むモードは幅に応じた初期倍率で始まる(期待 ${expectedZoom})`,
-    r.reader?.zoom === expectedZoom, r.reader);
+  check(`${label}: 窓は画面幅いっぱいの倍率(100%)で始まる`,
+    r.windowFillsWidth === true, { windowFillsWidth: r.windowFillsWidth });
   // 縦書きは右端から読むので、左上から始まると本文を探すのに何画面も送ることになる。
   // 選んでいる設問の枠が、読み始めの見える範囲に入っていることを確かめる
   check(`${label}: 読み始めは選んでいる設問の解答欄が見える範囲に入る`,
@@ -515,7 +634,7 @@ async function assertReader(send, label, viewportWidth) {
   await evalJs(send, `document.getElementById("easysmarky-host").shadowRoot.querySelector('button[aria-label="ページを全画面で読む"]').click()`);
   await sleep(500);
   await screenshot(send, `reader-${viewportWidth}.png`);
-  await evalJs(send, `document.getElementById("easysmarky-host").shadowRoot.querySelector(".es-reader-head button").click()`);
+  await evalJs(send, `document.getElementById("easysmarky-host").shadowRoot.querySelector(".es-reader-head button:not(.es-reader-toggle)").click()`);
 }
 
 // ---------------------------------------------------------------- 実行
@@ -538,6 +657,7 @@ try {
     await openHarness(send, URL_HARNESS);
     await evalJs(send, `window.__esView("view")`);
     await assertReader(send, label, w);
+    await assertReaderWindowVertical(send, label, w);
   }
 
   // 目視確認用のスクリーンショット
