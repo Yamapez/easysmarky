@@ -35,6 +35,15 @@ export interface PageViewerOptions {
    * 問題ページ側で同じ座標が通用するかは実機で未確認のため重ねない。
    */
   rims?: RimOptions;
+  /** 初期ズーム倍率。指定すると「全体」に戻すまで設問ジャンプで自動ズームしない */
+  initialZoom?: number;
+  /** 指定があると「読む」ボタンを出す(全画面の読むモードを開く)。読むモードには渡さない */
+  onOpenReader?: () => void;
+  /** 最初に表示する種別・ページ。既定は問題ページがあれば問題の先頭、無ければ解答用紙の先頭 */
+  initialSource?: PageSource;
+  initialIndex?: number;
+  /** 最初に見せたい位置(画像に対する割合。x は水平中心、y は上端)。読み込み後にスクロールする */
+  focus?: { x: number; y: number };
 }
 
 export interface PageViewerHandle {
@@ -43,6 +52,8 @@ export interface PageViewerHandle {
   goTo(source: PageSource, index: number): void;
   /** いま表示している種別。設問からのジャンプ先を決めるのに使う */
   currentSource(): PageSource;
+  /** いま表示しているページの添字(0始まり) */
+  currentIndex(): number;
   /** 前後のページへ送る(キーボードショートカット用) */
   step(delta: number): void;
   /** その設問があるページを(いま見ている種別のまま)開き、枠を選択状態にする */
@@ -52,7 +63,7 @@ export interface PageViewerHandle {
 }
 
 /** ズーム倍率。1 = ペイン幅にフィット */
-const ZOOM_STEPS = [1, 1.5, 2, 3, 4];
+export const ZOOM_STEPS = [1, 1.5, 2, 3, 4];
 
 /**
  * base_sheet_field.page を画像配列の添字に変換する。
@@ -73,12 +84,14 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   const answerImages = opts.answerImages ?? [];
   const rims = opts.rims;
 
-  let source: PageSource = questionImages.length > 0 ? "question" : "answer";
-  let index = 0;
+  let source: PageSource = opts.initialSource ?? (questionImages.length > 0 ? "question" : "answer");
+  // goTo と同じく範囲内に収める(範囲外の添字では画像が無く、描画で落ちる)
+  const initialCount = (source === "question" ? questionImages : answerImages).length;
+  let index = Math.min(Math.max(opts.initialIndex ?? 0, 0), Math.max(initialCount - 1, 0));
   /** ズーム倍率。1 = ペイン幅にフィット。設問を切り替えても保持する(手動で拡大した状態を壊さない) */
-  let zoomScale = 1;
+  let zoomScale = opts.initialZoom ?? 1;
   /** ＋/−で拡大したら true。「全体」を押すまで、設問へのジャンプで自動ズームしない */
-  let userZoomed = false;
+  let userZoomed = opts.initialZoom != null;
   let activeFieldId: number | null = null;
   /** showField() が要求した「まだ見せられていない」設問。画像の読み込み完了後にパンする */
   let pendingFocusId: number | null = null;
@@ -151,6 +164,14 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   zoom.appendChild(zoomOutBtn);
   zoom.appendChild(zoomFitBtn);
   zoom.appendChild(zoomInBtn);
+  if (opts.onOpenReader) {
+    const readBtn = document.createElement("button");
+    readBtn.type = "button";
+    readBtn.textContent = "読む";
+    readBtn.setAttribute("aria-label", "ページを全画面で読む");
+    readBtn.addEventListener("click", () => opts.onOpenReader?.());
+    zoom.appendChild(readBtn);
+  }
   bar.appendChild(zoom);
 
   // --- 画像 + 解答欄の枠 ---
@@ -409,10 +430,23 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
 
   render();
 
+  // 読み込み後に、指定位置(設問の枠など)を見える範囲に入れる。
+  // 縦書きは右端から始まるため、既定の左上から読ませると本文を探すのに何画面もスクロールが要る
+  if (opts.focus) {
+    const focus = opts.focus;
+    whenImageReady(() => {
+      scroll.scrollTo({
+        left: focus.x * canvas.clientWidth - scroll.clientWidth / 2,
+        top: focus.y * canvas.clientHeight - scroll.clientHeight * 0.35,
+      });
+    });
+  }
+
   return {
     element: el,
     goTo,
     currentSource: () => source,
+    currentIndex: () => index,
     step,
     showField,
     refreshRims: paintRims,
