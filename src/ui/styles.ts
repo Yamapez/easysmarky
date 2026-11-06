@@ -795,6 +795,10 @@ button:focus-visible,
   max-width: none;
   height: auto;
 }
+/* 窓表示: 切り出した範囲だけを見せる。範囲の外は canvas の端で切り、画面の中央に置く */
+.es-viewer-canvas.is-cropped { overflow: hidden; margin-inline: auto; }
+/* 読むモードの窓は、画面の高さを cqh の基準にして縦長でも画面に収める(canvas の width で使う) */
+.es-reader .es-viewer-scroll { container-type: size; }
 .es-viewer-rims {
   position: absolute;
   inset: 0;
@@ -917,6 +921,12 @@ button:focus-visible,
   padding: 0 12px;
   font-size: 14px;
   font-family: inherit;
+}
+.es-reader-head .es-reader-toggle { margin-right: auto; }
+.es-reader-head .es-reader-toggle[aria-pressed="true"] {
+  background: #e3f2fd;
+  border-color: #2196c9;
+  color: #0d47a1;
 }
 
 /* ===== PC: ビューアとエディタを左右に並べる ===== */
