@@ -188,6 +188,8 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
       (event: KeyboardEvent) => {
         if (event.key !== "Escape") return;
         if (!host || host.style.display === "none") return;
+        // 読むモードが開いている間は、Esc をそちら(formView の読むモード)に任せる
+        if (shadow.querySelector(".es-reader")) return;
         // IME確定のキャンセルでも Escape が飛んでくるブラウザがあるため無視する
         if (event.isComposing || event.keyCode === 229) return;
         const active = shadow.activeElement;

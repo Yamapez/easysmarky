@@ -889,6 +889,36 @@ button:focus-visible,
   font-size: 13px;
 }
 
+/* ===== 読むモード(解答用紙の全画面表示。枠なし) ===== */
+.es-reader {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: #eceff1;
+}
+.es-reader-head {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px;
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+}
+.es-reader-head button {
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  border-radius: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
 /* ===== PC: ビューアとエディタを左右に並べる ===== */
 @media (min-width: 900px) {
   .es-work { flex-direction: row; }

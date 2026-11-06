@@ -14,7 +14,7 @@ import {
 } from "../storage/backup";
 import { createFieldEditor, fieldLabel, fieldShortLabel, type FieldEditorHandle } from "./fieldEditor";
 import type { HeaderHandle } from "./overlay";
-import { createPageViewer, pageArrayIndex, type RimFieldInfo } from "./pageViewer";
+import { createPageViewer, pageArrayIndex, ZOOM_STEPS, type RimFieldInfo } from "./pageViewer";
 import { createQuestionStrip, type StripItem } from "./questionStrip";
 import type { SelectedSheet } from "./sheetPicker";
 
@@ -239,8 +239,86 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       },
       onSelect: (id) => focusField(id, { focusInput: true }),
     },
+    onOpenReader: () => openReader(),
   });
   questionPane.appendChild(viewer.element);
+
+  // ---------------------------------------------------------------- 読むモード
+  // 問題文は解答用紙の画像に印字されていることがある(国語など)。上のペインは小さく本文が読めないので、
+  // いま表示している種別(問題・解答用紙)のページを枠なしで全画面に開く。
+  // 閉じても上のビューアの表示位置・ズームは変わらない。
+  let reader: HTMLElement | null = null;
+  /** 読むモードを開いたボタン。閉じたあとにフォーカスを戻す */
+  let readerOpener: HTMLElement | null = null;
+  const READ_TARGET_WIDTH = 1100;
+
+  function closeReader(): void {
+    reader?.remove();
+    reader = null;
+    window.removeEventListener("keydown", onReaderKeyDown, true);
+    readerOpener?.focus();
+    readerOpener = null;
+  }
+
+  function onReaderKeyDown(event: KeyboardEvent): void {
+    if (!reader || !reader.isConnected) {
+      window.removeEventListener("keydown", onReaderKeyDown, true);
+      return;
+    }
+    if (event.key !== "Escape") return;
+    // IME確定のキャンセルでも Escape が飛んでくるブラウザがあるため無視する
+    if (event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    closeReader();
+  }
+
+  function openReader(): void {
+    if (reader) return;
+    // 画面幅に応じて、本文が読める幅(約1100px)になる最小の倍率から始める
+    const initialZoom =
+      ZOOM_STEPS.find((s) => window.innerWidth * s >= READ_TARGET_WIDTH) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    // 今いるページと、選んでいる設問の枠の位置から読み始める(解答用紙を見ていて、設問がそのページにあるとき)
+    const pageIndex = viewer.currentIndex();
+    const sourceNow = viewer.currentSource();
+    const current = focusId != null ? fieldById.get(focusId) : undefined;
+    const sheetNow = sourceNow === "answer" ? answerPageSizeByIndex(report.base_sheet, pageIndex) : null;
+    let focus: { x: number; y: number } | undefined;
+    if (current && sheetNow && pageArrayIndex(answerImages, current.raw.page) === pageIndex) {
+      const [x, y, w] = current.raw.rim;
+      focus = { x: (x + w / 2) / sheetNow.width, y: y / sheetNow.height };
+    }
+    const readerViewer = createPageViewer({
+      questionImages,
+      answerImages,
+      initialZoom,
+      initialSource: sourceNow,
+      initialIndex: pageIndex,
+      focus,
+    });
+
+    const el = document.createElement("div");
+    el.className = "es-reader";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "ページの全画面表示");
+    const head = document.createElement("div");
+    head.className = "es-reader-head";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", "読むモードを閉じる");
+    closeBtn.addEventListener("click", closeReader);
+    head.appendChild(closeBtn);
+    el.appendChild(head);
+    el.appendChild(readerViewer.element);
+    // 開いた側のボタンを覚えておき、閉じたら戻す。開いた直後は閉じるボタンへ移す
+    readerOpener = (form.getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null;
+    form.appendChild(el);
+    closeBtn.focus();
+
+    reader = el;
+    window.addEventListener("keydown", onReaderKeyDown, true);
+  }
 
   // ---------------------------------------------------------------- ストリップ
   const stripItems: StripItem[] = rimFields.map((f) => ({
@@ -673,6 +751,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       return;
     }
     if (form.getClientRects().length === 0) return; // オーバーレイ非表示中
+    // 読むモード中は、裏の入力欄へのフォーカス移動や保存を起こさない(読んでいる間に回答が変わるのを防ぐ)
+    if (reader) return;
     // 日本語入力の変換中のキーは、確定操作として入力欄に任せる
     if (event.isComposing || event.keyCode === 229) return;
     if (event.altKey && event.key === "Enter") {
