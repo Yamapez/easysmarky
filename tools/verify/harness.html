@@ -58,7 +58,9 @@ const RIMS = [
   // 2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
   // cut_margin ぶんが用紙の外へ出るので、切り出しのクランプ(src/ui/cropPreview.ts)も
   // ここで見る。テキストのみ(answer_type:3)なので編集できる。
-  { id: 3, page: 2, part3: "ウ", rim: [0, 800, 760, 120], fill: "#e3e9ff", type: 3 },
+  // マス目あり(v0.12.0): 縦罫線を 38px おきに引く(20マス)。中心の画素(x=398)は罫線から外してある
+  // (既存の中心画素の検査が塗り色のまま通るように)。文字サイズは 38、1行20字で改行される。
+  { id: 3, page: 2, part3: "ウ", rim: [0, 800, 760, 120], fill: "#e3e9ff", type: 3, gridStep: 38 },
   // 縦長の解答欄(実機の「1文字だけ書く縦書きの解答欄」に相当)。
   // これが無いと canvas の max-height 上限が当たる経路を一度も通らず、
   // 「幅だけ指定して height:auto に任せる」= 高さだけ潰れて横に伸びる不具合
@@ -91,6 +93,11 @@ function makePage(text, lines, bg, page, rims) {
     const [x, y, w, h] = r.rim;
     g.fillStyle = r.fill;
     g.fillRect(x, y, w, h);
+    // マス目(印字された縦罫線)。解答欄の内側だけに引く。縁は罫線に数えない(検出側も縁を除く)
+    if (r.gridStep) {
+      g.fillStyle = "#333";
+      for (let k = 1; k * r.gridStep < w; k++) g.fillRect(x + k * r.gridStep, y, 2, h);
+    }
     g.strokeStyle = "#888"; g.lineWidth = 2;
     g.strokeRect(x, y, w, h);
   }
@@ -968,6 +975,32 @@ async function runAssertions() {
   };
   confirmCalls.length = 0;
 
+  // --- マス目のある解答欄(設問ウ・横書き・20マス): 検出したマスに合わせて文字の左上を置き、21字で20字と1字に改行する ---
+  // 文字の箱の左上と幅が、解答欄の枠(rim)と一致するかで見る。マス目が効いていなければ中央に寄って外れる。
+  // Esc で閉じる検査の前に置く。入力は検査のあと空に戻す(後続の件数や未保存の判定を変えないように)。
+  qa(".es-strip-chip")[3].click();
+  await sleep(700);
+  {
+    const ta = q("textarea.es-textarea");
+    ta.value = "あ".repeat(21);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(400);
+    const img = q(".es-preview-overlay");
+    const guide = q(".es-rim-guide");
+    const a = img?.getBoundingClientRect();
+    const b = guide?.getBoundingClientRect();
+    results.steps.gridAlign = {
+      overlayShown: !!img && img.style.display !== "none",
+      guideShown: !!guide && guide.style.display !== "none",
+      leftDiff: a && b ? a.left - b.left : null,
+      topDiff: a && b ? a.top - b.top : null,
+      widthRatio: a && b && b.width > 0 ? a.width / b.width : null,
+    };
+    ta.value = "";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(100);
+  }
+
   // --- Esc で閉じる(1回目は入力欄からフォーカスを外すだけ) ---
   // 必ず最後に置く(閉じるとこの先の操作ができなくなるため)
   const hostEl = document.getElementById("easysmarky-host");
@@ -997,6 +1030,7 @@ async function runAssertions() {
     confirmMessage: confirmCalls[0] || "",
     hostVisibleAfterConfirmed: hostEl.style.display !== "none",
   };
+
 
   return results;
 }

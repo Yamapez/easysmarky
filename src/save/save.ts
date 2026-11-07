@@ -2,6 +2,7 @@ import { ApiError, describeApiError, type ApiErrorKind } from "../api/client";
 import { fetchDigitalReport, saveDigitalReport } from "../api/endpoints";
 import type { DigitalReportQuery, SaveErrorResponse } from "../api/types";
 import { isEditableField, type EditableField } from "../model/field";
+import { renderedText } from "../model/gridLayout";
 import { buildFieldForSave, checkSaveGuard, type BuiltZipEntry } from "../model/toParam";
 import { buildAnswersZip } from "./buildZip";
 
@@ -43,10 +44,11 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
     return param;
   });
   // 照合は「送った内容」と比べる。保存の送信中に編集が入ると、生きている fields と
-  // 食い違って誤って不一致になるため、ここで送信時点の値を控えておく
+  // 食い違って誤って不一致になるため、ここで送信時点の値を控えておく。
+  // 送った本文はマス目に合わせた改行を含むので、入力欄の text ではなく同じ本文(renderedText)を控える
   const sentTexts = new Map<number, string>();
   for (const field of params.fields) {
-    if (isEditableField(field)) sentTexts.set(field.raw.id, field.text.trim());
+    if (isEditableField(field)) sentTexts.set(field.raw.id, renderedText(field).trim());
   }
 
   const zipBlob = buildAnswersZip(zipEntries);

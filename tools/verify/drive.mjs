@@ -268,6 +268,13 @@ function assertAll(label, r, viewportWidth) {
     s.stripNav.field3Crop);
   check(`${label}: 用紙端でも解答欄が切り出しに収まる`,
     s.stripNav.field3CenterPixel === "#e3e9ff", s.stripNav.field3CenterPixel);
+  // マス目のある解答欄(設問ウ・横書き・20マス・v0.12.0): 検出したマスの左上に文字の箱を合わせ、
+  // 1行20字(=マスの幅ちょうど)で改行する。マス目が効いていなければ中央に寄って左上がずれる
+  const g = s.gridAlign;
+  check(`${label}: マス目のある解答欄は、文字の箱の左上を枠の左上に合わせる`,
+    !!g && g.overlayShown && g.guideShown && Math.abs(g.leftDiff) < 2 && Math.abs(g.topDiff) < 2, g);
+  check(`${label}: マス目の幅ちょうどに、20字ごとに改行して収まる`,
+    !!g && g.widthRatio != null && Math.abs(g.widthRatio - 1) < 0.02, g);
   // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる(ウ・オ・カ・キの4件)。
   // rim[0,800,760,120] → left 0% / top 71.4285…% / width 95% / height 10.714…%
   check(`${label}: 設問を選ぶとその設問のページへ送られる`,
