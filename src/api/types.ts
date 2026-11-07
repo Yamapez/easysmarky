@@ -5,12 +5,20 @@ export const Direction = {
   Vertical: 2 as Direction,
 };
 
-export type AnswerType = 1 | 2 | 3; // 1: テキスト, 2: 選択, 3: 画像(手書き)
+/**
+ * 公式 app.js の AnswerTypeEnum と同じ値。根拠は2つ: (1) 公式の列挙
+ * (Both=1, Draw=2, Text=3, Choice=4, Image=5)、(2) 実機の取得結果で choice_texts が
+ * 空でないのは answer_type 4 の設問だけだったこと(156レポート・約4,500フィールド)。
+ * 以前は 1:テキスト・2:選択・3:画像 と書いていたが、それは誤りだった。
+ */
+export type AnswerType = 1 | 2 | 3 | 4 | 5;
 
 export const AnswerType = {
-  Text: 1 as AnswerType,
-  Choice: 2 as AnswerType,
-  Image: 3 as AnswerType,
+  Both: 1 as AnswerType,   // 手書き・テキスト
+  Draw: 2 as AnswerType,   // 手書きのみ
+  Text: 3 as AnswerType,   // テキストのみ
+  Choice: 4 as AnswerType, // 選択肢(記号問題など)
+  Image: 5 as AnswerType,  // 画像
 };
 
 export interface CurrentUser {

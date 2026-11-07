@@ -25,6 +25,12 @@ UIは「1設問ずつ集中して入力する」方針で作られている(解�
 下部の設問ストリップで移動し、「次の未入力へ」で未入力を追う)。解答欄の枠は、rim の座標系が
 確実な解答用紙ページにだけ重ねること(問題ページ側で一致するかは実機で未確認)。
 
+### answer_type の値(公式 app.js の AnswerTypeEnum と一致・実機で確認)
+
+`1` 手書き・テキスト / `2` 手書きのみ / `3` テキストのみ / `4` 選択肢(記号問題) / `5` 画像。
+`src/api/types.ts` の `AnswerType` と同じ値。以前の定義(1テキスト・2選択・3画像)は誤りだった。
+テキストを打てるのは 1 と 3、選択式は 4、それ以外は編集不可。
+
 ### rim の座標系(実機で確認済み・v0.6.2)
 
 - **`base_sheet` に `width` / `height` は無い。** rim と `cut_margin` の座標系は
@@ -76,7 +82,7 @@ v0.11.0 で、次の端末側の保存を足した: 「続きから」用の最�
 ### Smarky公式 app.js との対応
 
 `render/` と `model/toParam.ts` のロジックは、Smarky公式アプリ(minifyされた app.js)の挙動を忠実に再現したもの。コメントの「app.js の `Do`/`ye`/`$`/`ie`/`X` 相当」は公式コードのminify後関数名との対応を示す。計測式・改行分割規則(`/\r\n|\r|\n/`)・「保存の度に全answer_textsのPNGを再生成して再送する」方式などは公式と同一に保つこと。勝手に「改善」すると公式画面での表示とズレる。
-- 記号問題(`answer_type: 2`・選択式)も公式 app.js に合わせる。選択肢は `choice_texts` を並べ、選んだ文字は `answer_texts[0].text` に入る。選び直したときだけ中央に置き直し、無回答は 1x1 の空スタンプ(PNG は空文字で描く)。根拠は `src/model/toParam.ts` の `buildFieldForSave` と `src/ui/fieldEditor.ts` の選択式の分岐に書いてある
+- 記号問題(`answer_type: 4`・選択式)も公式 app.js に合わせる。選択肢は `choice_texts` を並べ、選んだ文字は `answer_texts[0].text` に入る。選び直したときだけ中央に置き直し、無回答は 1x1 の空スタンプ(PNG は空文字で描く)。根拠は `src/model/toParam.ts` の `buildFieldForSave` と `src/ui/fieldEditor.ts` の選択式の分岐に書いてある
 
 ## 安全上の不変条件(変更禁止)
 

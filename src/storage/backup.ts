@@ -14,8 +14,17 @@ export interface LoadedBackup {
   savedAt: number | null;
 }
 
+/**
+ * 要約の集計規則の版。何で「編集できる設問」と数えるかを変えたら上げる。
+ * 版が違う要約は一覧に出さない(古い数字で「全設問入力済み」に見えるのを防ぐ。開き直すまで「—」)。
+ * 1: 旧定義(answer_type の値がずれていたころ)。2: answer_type を公式どおりに数える。
+ */
+export const SUMMARY_RULES = 2;
+
 /** 一覧画面で「3/8」「手書きあり・保存不可」を出すための、一度開いたことのある回の要約 */
 export interface SheetSummary {
+  /** 集計規則の版(SUMMARY_RULES)。省略された古い要約は読まない */
+  rules: number;
   /** easysmarkyで扱う設問数 */
   total: number;
   /** 入力済みの設問数 */
@@ -125,7 +134,13 @@ export function loadSheetSummaries(studentCode: string): SheetSummaries {
   try {
     const raw = localStorage.getItem(summaryKey(studentCode));
     const parsed = raw ? (JSON.parse(raw) as SheetSummaries) : null;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    // 版が違う(または版の無い)要約は捨てる。開き直すと新しい規則で書き直される
+    const current: SheetSummaries = {};
+    for (const [id, s] of Object.entries(parsed)) {
+      if (s && s.rules === SUMMARY_RULES) current[id] = s;
+    }
+    return current;
   } catch {
     return {};
   }

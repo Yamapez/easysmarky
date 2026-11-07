@@ -5,6 +5,30 @@ import { measureText } from "../render/measure";
 import { updatePrefs } from "../storage/prefs";
 import { drawCropPreview, type CropRect } from "./cropPreview";
 
+/**
+ * 編集不可の設問に出す理由。kind(設問か記入欄か)と answer_type(公式の AnswerTypeEnum)で分ける。
+ * 以前は kind を見ずに「画像などの解答欄」と出していたため、氏名欄(kind 9)も誤った理由になっていた。
+ */
+function lockedNote(field: EditableField, hasOwnEditor: boolean): string {
+  if (hasOwnEditor) {
+    return "この設問には複数の解答が既に入力されています。現バージョンのeasysmarkyでは編集できません(公式画面をご利用ください)。";
+  }
+  if (field.raw.kind !== 0) {
+    return "この欄は設問ではない記入欄(氏名欄など)のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
+  }
+  switch (field.raw.answer_type) {
+    case AnswerType.Choice:
+      return "この設問は選択肢の一覧が取得できないため、easysmarkyでは編集できません(公式画面をご利用ください)。";
+    case AnswerType.Draw:
+      return "この設問は手書きのみの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
+    case AnswerType.Image:
+      return "この設問は画像などの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
+    default:
+      // 未知の値は種類を決めつけない
+      return "この設問の解答形式は、easysmarkyでは編集できません(公式画面をご利用ください)。";
+  }
+}
+
 export interface FieldEditorOptions {
   field: EditableField;
   /** その設問がある解答用紙ページの画像 */
@@ -78,11 +102,7 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     const note = document.createElement("div");
     note.className = "es-field-locked-note";
     const hasOwnEditor = field.isEditableText || field.isEditableChoice;
-    note.textContent = hasOwnEditor
-      ? "この設問には複数の解答が既に入力されています。現バージョンのeasysmarkyでは編集できません(公式画面をご利用ください)。"
-      : field.raw.answer_type === AnswerType.Choice
-        ? "この設問は選択肢の一覧が取得できないため、easysmarkyでは編集できません(公式画面をご利用ください)。"
-        : "この設問は画像などの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
+    note.textContent = lockedNote(field, hasOwnEditor);
     card.appendChild(name);
     card.appendChild(note);
     el.appendChild(card);

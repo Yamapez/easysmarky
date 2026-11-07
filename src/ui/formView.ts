@@ -13,6 +13,7 @@ import {
   loadBackup,
   saveBackup,
   saveSheetSummary,
+  SUMMARY_RULES,
   type LoadedBackup,
   type SheetBackup,
 } from "../storage/backup";
@@ -444,6 +445,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   function persistSummary(savedAt: number): boolean {
     return saveSheetSummary(sheet.studentCode, sheet.baseSheetId, sheet.times, {
+      rules: SUMMARY_RULES,
       total: editableCount,
       filled: fields.filter(isFilledField).length,
       blocked: guard.blocked,
