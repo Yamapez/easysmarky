@@ -1,4 +1,5 @@
 import { toImageSrc } from "./cropPreview";
+import { loadPrefs, updatePrefs } from "../storage/prefs";
 import type { AnswerTextLayout } from "../render/answerLayout";
 import type { SheetRect } from "../model/readingWindow";
 import type { SheetSize } from "../model/sheetGeometry";
@@ -46,6 +47,12 @@ export interface PageViewerOptions {
   rims?: RimOptions;
   /** 初期ズーム倍率。指定すると「全体」に戻すまで設問ジャンプで自動ズームしない */
   initialZoom?: number;
+  /**
+   * true のとき、手動で選んだ倍率(＋/−・ピンチ)を easysmarky:prefs に記憶し、次回の初期値にする。
+   * 記憶した倍率は自動ズームの「下限」になる(設問を選んだときの自動拡大は、それより小さくしない)。
+   * 「全体」で記憶を消し、従来どおりの自動ズームに戻る。読むモードは記憶しない(拡大率の既定が別のため)。
+   */
+  zoomMemory?: boolean;
   /** 指定があると「読む」ボタンを出す(全画面の読むモードを開く)。読むモードには渡さない */
   onOpenReader?: () => void;
   /** 最初に表示する種別・ページ。既定は問題ページがあれば問題の先頭、無ければ解答用紙の先頭 */
@@ -107,9 +114,13 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   // goTo と同じく範囲内に収める(範囲外の添字では画像が無く、描画で落ちる)
   const initialCount = (source === "question" ? questionImages : answerImages).length;
   let index = Math.min(Math.max(opts.initialIndex ?? 0, 0), Math.max(initialCount - 1, 0));
+  /** 記憶していた倍率(zoomMemory のときだけ)。自動ズームの下限にも使う */
+  const remembered = opts.zoomMemory ? loadPrefs().zoom : null;
   /** ズーム倍率。1 = ペイン幅にフィット。設問を切り替えても保持する(手動で拡大した状態を壊さない) */
-  let zoomScale = opts.initialZoom ?? 1;
-  /** ＋/−で拡大したら true。「全体」を押すまで、設問へのジャンプで自動ズームしない */
+  let zoomScale = opts.initialZoom ?? remembered ?? 1;
+  /** 自動ズームの下限。記憶した倍率が無ければ 1(従来どおり) */
+  let zoomFloor = remembered ?? 1;
+  /** ＋/−/ピンチで手動に変えたら true。「全体」を押すまで、設問へのジャンプで自動ズームしない */
   let userZoomed = opts.initialZoom != null;
   let activeFieldId: number | null = null;
   /** showField() が要求した「まだ見せられていない」設問。画像の読み込み完了後にパンする */
@@ -357,7 +368,6 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
     zoomOutBtn.disabled = zoomScale <= ZOOM_STEPS[0] + 0.01;
     zoomInBtn.disabled = zoomScale >= ZOOM_STEPS[ZOOM_STEPS.length - 1] - 0.01;
 
-    canvas.style.width = `${zoomScale * 100}%`;
     if (hasImages) {
       const nextSrc = toImageSrc(images[index]);
       // 同じページの再描画で読み込みが走らないようにする
@@ -366,8 +376,29 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
       img.removeAttribute("src");
     }
     applyCrop();
+    applyCanvasWidth();
     renderRims();
     opts.onRender?.({ source, index });
+  }
+
+  /** 窓表示(切り出し)中の矩形。null なら全体表示 */
+  let activeCrop: { rect: SheetRect } | null = null;
+
+  /**
+   * canvas の幅を倍率から決める。render() とピンチ中の更新の両方がこれを通るので、
+   * 窓表示の式と全体表示の式がずれない。
+   */
+  function applyCanvasWidth(): void {
+    if (activeCrop) {
+      const { rect } = activeCrop;
+      // 窓は縦横どちらも画面に収める(縦長の窓が画面の高さを超えないように)。
+      // 倍率1は「窓が画面に収まる最大」で、そこから拡大すると scroll する。
+      // 高さの基準は .es-reader の scroll に container-type: size を当てた cqh(style.css 側)
+      // 倍率1で「幅・高さの両方に収まる最大」になり、倍率を上げるとその分だけ大きくなる
+      canvas.style.width = `calc(${zoomScale} * min(100cqw, ${(rect.width / rect.height) * 100}cqh))`;
+    } else {
+      canvas.style.width = `${zoomScale * 100}%`;
+    }
   }
 
   /**
@@ -378,19 +409,16 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   function applyCrop(): void {
     const crop = cropOn && opts.cropTo ? opts.cropTo(source, index) : null;
     if (!crop || crop.rect.width <= 0 || crop.rect.height <= 0) {
+      activeCrop = null;
       canvas.classList.remove("is-cropped");
       canvas.style.aspectRatio = "";
       img.style.cssText = "";
       return;
     }
     const { rect, sheet } = crop;
+    activeCrop = { rect };
     canvas.classList.add("is-cropped");
     canvas.style.aspectRatio = `${rect.width} / ${rect.height}`;
-    // 窓は縦横どちらも画面に収める(縦長の窓が画面の高さを超えないように)。
-    // 倍率1は「窓が画面に収まる最大」で、そこから拡大すると scroll する。
-    // 高さの基準は .es-reader の scroll に container-type: size を当てた cqh(style.css 側)
-    // 倍率1で「幅・高さの両方に収まる最大」になり、倍率を上げるとその分だけ大きくなる
-    canvas.style.width = `calc(${zoomScale} * min(100cqw, ${(rect.width / rect.height) * 100}cqh))`;
     img.style.position = "absolute";
     img.style.maxWidth = "none";
     img.style.width = `${(sheet.width / rect.width) * 100}%`;
@@ -452,7 +480,8 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
       const rimWidthFrac = field.rim[2] / sheet.width;
       const contextFrac = Math.min(1, rimWidthFrac + 0.3);
       const maxZoom = short ? 2 : 3;
-      const nextScale = Math.min(maxZoom, Math.max(1, 1 / contextFrac));
+      // 記憶した倍率(zoomFloor)より小さくはしない。記憶が無いときは従来どおり 1 以上
+      const nextScale = Math.max(zoomFloor, Math.min(maxZoom, Math.max(1, 1 / contextFrac)));
       if (Math.abs(nextScale - zoomScale) > 0.01) {
         zoomScale = nextScale;
         render();
@@ -501,19 +530,156 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   zoomInBtn.addEventListener("click", () => {
     userZoomed = true;
     zoomScale = ZOOM_STEPS.find((s) => s > zoomScale + 0.01) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    rememberZoom(zoomScale);
     render();
   });
   zoomOutBtn.addEventListener("click", () => {
     userZoomed = true;
     zoomScale = [...ZOOM_STEPS].reverse().find((s) => s < zoomScale - 0.01) ?? ZOOM_STEPS[0];
+    rememberZoom(zoomScale);
     render();
   });
   zoomFitBtn.addEventListener("click", () => {
     zoomScale = 1;
     userZoomed = false;
+    // 「全体」は記憶も消す(次回から従来どおりの自動ズームに戻る)。下限もこの画面の中で 1 に戻す
+    zoomFloor = 1;
+    rememberZoom(null);
     scroll.scrollTo(0, 0);
     render();
   });
+
+  // --- ピンチズーム(2本指のときだけ処理する。1本指のパン・タップはブラウザと枠の click に任せる) ---
+  // touch-action を pan-x pan-y にして、ブラウザ側のピンチ拡大を止める(ページ全体が拡大するのを防ぐ)
+  scroll.style.touchAction = "pan-x pan-y";
+  /** 押されている指の位置(pointerId → clientX/Y)。離れたら消す */
+  const pointers = new Map<number, { x: number; y: number }>();
+  /** ピンチ開始時の状態。開始距離・開始倍率と、開始時の中心点(canvas の割合座標) */
+  let pinch: { startDist: number; startZoom: number; fracX: number; fracY: number } | null = null;
+  /** ピンチ中と離した直後は、枠の click を捨てる(2本指で枠を触っても入力に入らないように) */
+  let suppressClicks = false;
+  let suppressTimer: number | null = null;
+  /** 離してからこの時間が過ぎたら click の抑止を解く */
+  const CLICK_RELEASE_MS = 350;
+
+  function rememberZoom(value: number | null): void {
+    if (!opts.zoomMemory) return;
+    updatePrefs({ zoom: value });
+  }
+
+  function clampZoom(value: number): number {
+    return Math.min(Math.max(value, ZOOM_STEPS[0]), ZOOM_STEPS[ZOOM_STEPS.length - 1]);
+  }
+
+  function twoPointers(): [{ x: number; y: number }, { x: number; y: number }] | null {
+    if (pointers.size < 2) return null;
+    const [a, b] = [...pointers.values()];
+    return [a, b];
+  }
+
+  /** 中心点(クライアント座標)を、スクロール領域の左上からの位置で返す */
+  function centerInScroll(a: { x: number; y: number }, b: { x: number; y: number }): { x: number; y: number } {
+    const rect = scroll.getBoundingClientRect();
+    return { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top };
+  }
+
+  function startPinch(): void {
+    const pair = twoPointers();
+    if (!pair) return;
+    const [a, b] = pair;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const center = centerInScroll(a, b);
+    // 中心点が画像のどこ(canvas の割合)を指しているかを覚えておき、拡大・縮小の間も同じ点を指すようにする
+    const canvasW = Math.max(canvas.offsetWidth, 1);
+    const canvasH = Math.max(canvas.offsetHeight, 1);
+    pinch = {
+      startDist: Math.max(dist, 1),
+      startZoom: zoomScale,
+      fracX: (scroll.scrollLeft + center.x) / canvasW,
+      fracY: (scroll.scrollTop + center.y) / canvasH,
+    };
+    suppressClicks = true;
+    if (suppressTimer != null) {
+      window.clearTimeout(suppressTimer);
+      suppressTimer = null;
+    }
+    // 2本とも離さず追えるように捕まえる(片方が枠の上で始まっても、ピンチは scroll 領域で受ける)
+    for (const id of pointers.keys()) {
+      try {
+        scroll.setPointerCapture(id);
+      } catch {
+        /* 捕まえられない環境でも、bubble で届く分だけで動く */
+      }
+    }
+  }
+
+  /** ピンチ中は canvas の幅だけを変える。renderRims() は毎回 DOM を作り直すので呼ばない(離したときに render する) */
+  function updatePinch(): void {
+    const pair = twoPointers();
+    if (!pinch || !pair) return;
+    const [a, b] = pair;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    zoomScale = clampZoom(pinch.startZoom * (dist / pinch.startDist));
+    userZoomed = true;
+    applyCanvasWidth();
+    // 同じ画像上の点が、指の中心に留まるようにスクロールを補正する
+    const center = centerInScroll(a, b);
+    scroll.scrollLeft = pinch.fracX * canvas.offsetWidth - center.x;
+    scroll.scrollTop = pinch.fracY * canvas.offsetHeight - center.y;
+  }
+
+  function finishPinch(): void {
+    if (!pinch) return;
+    const changed = Math.abs(zoomScale - pinch.startZoom) > 0.01;
+    pinch = null;
+    if (changed) rememberZoom(zoomScale);
+    // ボタンの有効・無効や枠の位置を、離した時点の倍率で一度だけ揃える
+    render();
+  }
+
+  function scheduleClickRelease(): void {
+    if (suppressTimer != null) window.clearTimeout(suppressTimer);
+    suppressTimer = window.setTimeout(() => {
+      suppressClicks = false;
+      suppressTimer = null;
+    }, CLICK_RELEASE_MS);
+  }
+
+  scroll.addEventListener("pointerdown", (event: PointerEvent) => {
+    // 離した通知が来なかった指が残っていると、次の1本指が2本指扱いになり、枠の抑止が解けなくなる。
+    // 新しい1本目(primary)が来たときは、残っている指を捨てて数え直す
+    if (event.isPrimary && pointers.size > 0) {
+      pointers.clear();
+      if (pinch) finishPinch();
+    }
+    if (pointers.size === 0 && suppressTimer == null) suppressClicks = false;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 2) startPinch();
+  });
+  scroll.addEventListener("pointermove", (event: PointerEvent) => {
+    const p = pointers.get(event.pointerId);
+    if (!p) return;
+    p.x = event.clientX;
+    p.y = event.clientY;
+    if (pinch) updatePinch();
+  });
+  const endPointer = (event: PointerEvent): void => {
+    if (!pointers.delete(event.pointerId)) return;
+    if (pinch && pointers.size < 2) finishPinch();
+    if (pointers.size === 0) scheduleClickRelease();
+  };
+  scroll.addEventListener("pointerup", endPointer);
+  scroll.addEventListener("pointercancel", endPointer);
+  // ピンチ中に離れた click を、枠より先(capture)で止める
+  scroll.addEventListener(
+    "click",
+    (event: MouseEvent) => {
+      if (!suppressClicks) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true,
+  );
 
   render();
 

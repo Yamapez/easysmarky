@@ -260,6 +260,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       onSelect: (id) => focusField(id, { focusInput: true }),
     },
     onOpenReader: () => openReader(),
+    // 手動で選んだ倍率を端末に記憶し、次回の初期値にする(自動ズームの下限にもなる)
+    zoomMemory: true,
   });
   questionPane.appendChild(viewer.element);
 
@@ -768,7 +770,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     hint.className = "es-hint";
     const hintText = document.createElement("div");
     hintText.textContent =
-      "解答欄(枠)をタップすると入力を始められます。下の設問チップや ◀ ▶ で、ほかの設問へ移動できます。";
+      "解答欄(枠)をタップすると入力を始められます。下の設問チップや ◀ ▶ で、ほかの設問へ移動できます。" +
+      "スマホでは2本指のピンチで解答用紙を拡大・縮小でき、「読む」で全画面表示にできます。";
     const dismissBtn = document.createElement("button");
     dismissBtn.type = "button";
     dismissBtn.textContent = "わかった";
