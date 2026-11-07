@@ -4,6 +4,7 @@ import { layoutAnswerText } from "../render/answerLayout";
 import { measureText } from "../render/measure";
 import { updatePrefs } from "../storage/prefs";
 import { drawCropPreview, type CropRect } from "./cropPreview";
+import { CMD_LABEL } from "./platform";
 
 /**
  * 編集不可の設問に出す理由。kind(設問か記入欄か)と answer_type(公式の AnswerTypeEnum)で分ける。
@@ -56,6 +57,11 @@ export interface FieldEditorHandle {
   getField: () => EditableField;
   /** テキスト入力にフォーカスする。編集できない設問では何もしない */
   focus: () => void;
+  /**
+   * 横書き⇔縦書きを切り替える(キーボード用。ボタンと同じ経路で、端末の既定値にも覚える)。
+   * 切り替えたら true。テキスト設問ではない(選択式・編集不可)ときは何もせず false
+   */
+  toggleDirection: () => boolean;
   /** 作り直す前に呼ぶ。ResizeObserver を切る */
   destroy: () => void;
 }
@@ -106,7 +112,7 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     card.appendChild(name);
     card.appendChild(note);
     el.appendChild(card);
-    return { element: el, getField: () => field, focus: () => {}, destroy: () => {} };
+    return { element: el, getField: () => field, focus: () => {}, toggleDirection: () => false, destroy: () => {} };
   }
 
   // --- 解答欄プレビュー(切り抜き画像 + 描画されるテキストの重ね合わせ) ---
@@ -405,10 +411,11 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     choiceHints.className = "es-key-hints";
     choiceHints.innerHTML =
       "<span><kbd>←</kbd><kbd>→</kbd>選択肢を移動</span>" +
-      "<span><kbd>Ctrl</kbd>+<kbd>↵</kbd>次の設問</span>" +
+      `<span><kbd>Shift</kbd>+<kbd>↵</kbd>次の設問</span>` +
+      `<span><kbd>${CMD_LABEL}</kbd>+<kbd>←</kbd><kbd>→</kbd>前後の設問</span>` +
       "<span><kbd>Alt</kbd>+<kbd>↵</kbd>次の未入力</span>" +
-      "<span><kbd>Alt</kbd>+<kbd>↑↓</kbd>ページ送り</span>" +
-      "<span><kbd>Ctrl</kbd>+<kbd>S</kbd>下書き保存</span>" +
+      `<span><kbd>${CMD_LABEL}</kbd>+<kbd>↑</kbd><kbd>↓</kbd>ページ送り</span>` +
+      `<span><kbd>${CMD_LABEL}</kbd>+<kbd>S</kbd>下書き保存</span>` +
       "<span><kbd>Esc</kbd>閉じる</span>";
     el.appendChild(choiceHints);
 
@@ -416,6 +423,8 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       element: el,
       getField: () => field,
       focus: () => (buttons.get(field.text) ?? buttons.get(""))?.focus(),
+      // 選択式には書字方向の設定が無い
+      toggleDirection: () => false,
       destroy: () => {
         choiceObserver.disconnect();
         unwatchViewport();
@@ -474,11 +483,12 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   const hints = document.createElement("div");
   hints.className = "es-key-hints";
   hints.innerHTML =
-    "<span><kbd>Ctrl</kbd>+<kbd>↵</kbd>次の設問</span>" +
-    "<span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↵</kbd>前の設問</span>" +
+    `<span><kbd>Shift</kbd>+<kbd>↵</kbd>次の設問</span>` +
+    `<span><kbd>${CMD_LABEL}</kbd>+<kbd>←</kbd><kbd>→</kbd>前後の設問</span>` +
     "<span><kbd>Alt</kbd>+<kbd>↵</kbd>次の未入力</span>" +
-    "<span><kbd>Alt</kbd>+<kbd>↑↓</kbd>ページ送り</span>" +
-    "<span><kbd>Ctrl</kbd>+<kbd>S</kbd>下書き保存</span>" +
+    `<span><kbd>${CMD_LABEL}</kbd>+<kbd>↑</kbd><kbd>↓</kbd>ページ送り</span>` +
+    `<span><kbd>${CMD_LABEL}</kbd>+<kbd>S</kbd>下書き保存</span>` +
+    `<span><kbd>${CMD_LABEL}</kbd>+<kbd>D</kbd>横書き・縦書き</span>` +
     "<span><kbd>Esc</kbd>閉じる</span>";
   el.appendChild(hints);
 
@@ -520,18 +530,16 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
 
   // 今の向きを押し直しただけなら変更ではない(未保存の表示や離脱の確認を誤って出さないため)
   // 手動で選んだときだけ端末に覚える(答えの無い設問の既定値になる)。押し直しは覚えない
-  horizBtn.addEventListener("click", () => {
-    if (field.direction === Direction.Horizon) return;
-    field.direction = Direction.Horizon;
-    updatePrefs({ direction: Direction.Horizon });
+  /** 向きを変える。押し直しは変更扱いしない。ボタンとキー(Cmd+D)で同じ経路を通す */
+  function setDirection(next: Direction): boolean {
+    if (field.direction === next) return false;
+    field.direction = next;
+    updatePrefs({ direction: next });
     onEdited();
-  });
-  vertBtn.addEventListener("click", () => {
-    if (field.direction === Direction.Vertical) return;
-    field.direction = Direction.Vertical;
-    updatePrefs({ direction: Direction.Vertical });
-    onEdited();
-  });
+    return true;
+  }
+  horizBtn.addEventListener("click", () => setDirection(Direction.Horizon));
+  vertBtn.addEventListener("click", () => setDirection(Direction.Vertical));
   textarea.addEventListener("input", () => {
     field.text = textarea.value;
     onEdited();
@@ -568,6 +576,9 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       // キーボードが出る前の位置合わせ(iOS では直後にずれるので、上の visualViewport の変化でも寄せ直す)
       textarea.scrollIntoView({ block: "nearest" });
     },
+    // 切り替えはボタンを経由しない。フォーカスは入力欄に残したまま向きだけ変わる
+    toggleDirection: () =>
+      setDirection(field.direction === Direction.Horizon ? Direction.Vertical : Direction.Horizon),
     destroy: () => {
       resizeObserver.disconnect();
       unwatchViewport();

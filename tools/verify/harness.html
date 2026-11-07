@@ -19,6 +19,7 @@
 <script src="harness-d1.js"></script>
 <script src="harness-d2.js"></script>
 <script src="harness-d3.js"></script>
+<script src="harness-d4.js"></script>
 
 <script>
 // ============================================================
@@ -211,6 +212,7 @@ const REPORT = {
 //   delayMs:          { list, digitalReport, save } 各 API 応答を遅らせるミリ秒
 //   skipWriteBackIds: 保存時に REPORT へ書き戻さない設問 id の配列(保存後照合の不一致を作る)
 //   seedStorage:      フォームを開く前に localStorage へ入れる { キー: 文字列 }
+//   serverTexts:      開く前にサーバー側の答えを書き換える { 設問id: 文字列 }(他所での変更の再現)
 // ============================================================
 const SCENARIO_NAME = new URLSearchParams(location.search).get("scenario");
 const SCN = (window.__esScenarios && SCENARIO_NAME && window.__esScenarios[SCENARIO_NAME]) || {};
@@ -225,7 +227,27 @@ const KEEP_AFTER_SAVE = [":summary:", "easysmarky:hint-", "easysmarky:last:", "e
 const POST_LOG = [];
 // 失敗の注入。次の1回だけ通信が落ちたように振る舞わせる(接続段階の失敗 = TypeError)
 //   saveNetwork: 保存の POST を落とす / verifyOnce: 保存後の再取得(照合)を落とす
-window.__esFail = { saveNetwork: false, verifyOnce: false };
+//   preCheckOnce: 保存の前の再取得(他所での変更の確認)を落とす(POST の後ではない最初の GET)
+window.__esFail = { saveNetwork: false, verifyOnce: false, preCheckOnce: false };
+// 直前の通信が POST だったか(verifyOnce は POST の後の最初の GET だけを落とす)
+let getAfterPost = false;
+// 他所での変更を再現する: サーバー側の設問 id の答えを text にする(null なら空)
+window.__esServerSet = (id, text) => {
+  const target = REPORT.base_sheet_fields.find((f) => f.id === id);
+  if (!target) return false;
+  target.answer_texts = text == null ? [] : [{
+    id: 900 + id, base_sheet_field_id: id, idx: 0, text, color: "#000000",
+    font_size: 40, line_height: 1.2, x: null, y: null, width: null, height: null, direction: 1,
+  }];
+  return true;
+};
+// 他所で手書きが加わったことを再現する(保存ガードが止める)
+window.__esServerHandwrite = (id) => {
+  const target = REPORT.base_sheet_fields.find((f) => f.id === id);
+  if (!target) return false;
+  target.answer_images = [{ id: 990 + id, base_sheet_field_id: id, idx: 0, x: 0, y: 0, width: 10, height: 10 }];
+  return true;
+};
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String(input);
@@ -263,11 +285,18 @@ window.fetch = async (input, init) => {
       entry.error = String(e);
     }
     POST_LOG.push(entry);
+    getAfterPost = true;
     return json({ ok: true });
   }
 
   if (url.startsWith("/api/student/digital_report")) {
-    if (window.__esFail.verifyOnce) {
+    const afterPost = getAfterPost;
+    getAfterPost = false;
+    if (window.__esFail.preCheckOnce && !afterPost) {
+      window.__esFail.preCheckOnce = false;
+      throw new TypeError("Failed to fetch");
+    }
+    if (window.__esFail.verifyOnce && afterPost) {
       window.__esFail.verifyOnce = false;
       throw new TypeError("Failed to fetch");
     }
@@ -284,6 +313,8 @@ try {
   }
   // シナリオが指定した初期データは、消去のあと・オーバーレイを開く前に入れる
   for (const [key, value] of Object.entries(SCN.seedStorage || {})) localStorage.setItem(key, value);
+  // 下書きを残したあとに他所で変わった、という状態を作る(開く前のサーバー側の答え)
+  for (const [id, text] of Object.entries(SCN.serverTexts || {})) window.__esServerSet(Number(id), text);
 } catch (e) { /* localStorage が使えない環境は無視 */ }
 
 // ============================================================
@@ -310,6 +341,10 @@ const shadow = () => {
 };
 const q = (sel) => { const s = shadow(); return s && s.querySelector(sel); };
 const qa = (sel) => { const s = shadow(); return s ? Array.from(s.querySelectorAll(sel)) : []; };
+// 「Cmd」の修飾キー。アプリ(src/ui/platform.ts)と同じく、Mac は metaKey、それ以外は ctrlKey
+const CMD_MOD = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "")
+  ? { metaKey: true }
+  : { ctrlKey: true };
 /** 同じクラスの要素がPC用/スマホ用に複数あるので、いま画面に出ている方を選ぶ */
 const visible = (sel) => qa(sel).find((el) => el.getBoundingClientRect().width > 0) || null;
 
@@ -545,12 +580,12 @@ async function runAssertions() {
     note: (q(".es-field-locked-note")?.textContent || "").trim(),
   };
 
-  // --- Ctrl+↵ は編集不可の設問(エ)を飛ばす ---
+  // --- Shift+↵ は編集不可の設問(エ)を飛ばす ---
   qa(".es-strip-chip")[1].click(); // イ
   await sleep(400);
   const beforeSkip = (q(".es-editor-name").textContent || "").trim();
   q("textarea.es-textarea").dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
+    new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, composed: true }),
   );
   await sleep(400);
   results.steps.skipLocked = {
@@ -756,17 +791,65 @@ async function runAssertions() {
     await sleep(300);
   }
 
-  // --- キーボードショートカット(Ctrl+↵ で次の設問) ---
+  // --- 日本語入力の変換中(isComposing)の Shift+↵ は確定操作として入力欄に任せ、設問は動かない ---
+  const composingBefore = (q(".es-editor-name").textContent || "").trim();
+  q("textarea.es-textarea").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, isComposing: true, bubbles: true, composed: true }),
+  );
+  await sleep(200);
+  results.steps.composingShiftEnter = {
+    before: composingBefore,
+    after: (q(".es-editor-name").textContent || "").trim(),
+  };
+
+  // --- キーボードショートカット(Shift+↵ で次の設問) ---
   // Shadow DOM の外(window)で受けているので composed: true が要る
   const beforeShortcut = (q(".es-editor-name").textContent || "").trim();
   q("textarea.es-textarea").dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
+    new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, composed: true }),
   );
   await sleep(400);
   results.steps.shortcut = {
     before: beforeShortcut,
     after: (q(".es-editor-name").textContent || "").trim(),
   };
+
+  // 以下のキーは入力欄(テキスト設問)か、今の設問の入力先(選択式なら選択肢一覧)へ送る
+  const keyTarget2 = () => q("textarea.es-textarea") || q(".es-choice-list");
+  const nameNow = () => (q(".es-editor-name").textContent || "").trim();
+  const pressKey = (init) =>
+    keyTarget2().dispatchEvent(new KeyboardEvent("keydown", { ...init, bubbles: true, composed: true }));
+
+  // --- Cmd+→ / Cmd+← で前後の設問へ(往復して元に戻る) ---
+  const cmdBefore = nameNow();
+  pressKey({ key: "ArrowRight", ...CMD_MOD });
+  await sleep(300);
+  const cmdAfterRight = nameNow();
+  pressKey({ key: "ArrowLeft", ...CMD_MOD });
+  await sleep(300);
+  results.steps.cmdArrow = { before: cmdBefore, afterRight: cmdAfterRight, afterLeft: nameNow() };
+
+  // --- Cmd+D で横書き⇔縦書き(テキスト設問)。二度押して元に戻す ---
+  const dirLabel = () => (q(".es-direction-toggle button.active") || {}).textContent || null;
+  const dirIsText = !!q("textarea.es-textarea");
+  const dirBefore = dirLabel();
+  pressKey({ key: "d", ...CMD_MOD });
+  await sleep(200);
+  const dirAfter = dirLabel();
+  pressKey({ key: "d", ...CMD_MOD });
+  await sleep(200);
+  results.steps.cmdDirection = { isText: dirIsText, before: dirBefore, after: dirAfter, restored: dirLabel() };
+
+  // --- Cmd+↑↓ でページ送り(前のページへ送ってから次のページへ戻す)。この時点は 2/2 の最終ページ ---
+  // 最終ページで下へ送ると動けないので、先に上へ送る
+  const pageLabel = () => (q(".es-viewer-count") || {}).textContent || null;
+  const pageBefore = pageLabel();
+  pressKey({ key: "ArrowUp", ...CMD_MOD });
+  await sleep(200);
+  const pageAfterUp = pageLabel();
+  pressKey({ key: "ArrowDown", ...CMD_MOD });
+  await sleep(200);
+  results.steps.cmdPage = { before: pageBefore, afterUp: pageAfterUp, afterDown: pageLabel() };
 
   // --- 下書き保存の往復 ---
   const saveBtn = visible(".es-save-btn");
@@ -828,22 +911,32 @@ async function runAssertions() {
   results.steps.altEnter = { toastText: toastAlt ? toastAlt.textContent : null };
 
   // --- 最後の設問で進もうとしたら、動けないことを告げる ---
-  // 現在は ウ。Ctrl+↵ で オ、もう一度で最後の編集可能な設問 カ(選択式)へ、さらに押すと告知になる
+  // 現在は ウ。Shift+↵ で オ、もう一度で最後の編集可能な設問 カ(選択式)へ、さらに押すと告知になる
   // 選択式には textarea が無いので、キーは今の入力欄(無ければ選択肢一覧)に送る
   const keyTarget = () => q("textarea.es-textarea") || q(".es-choice-list");
-  const ctrlEnter = () =>
-    keyTarget().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }));
-  ctrlEnter();
+  const shiftEnter = () =>
+    keyTarget().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, composed: true }));
+  shiftEnter();
   await sleep(300);
-  ctrlEnter();
+  shiftEnter();
   await sleep(300);
   const editorAtLast = (q(".es-editor-name").textContent || "").trim();
-  ctrlEnter();
+  shiftEnter();
   await sleep(200);
   const toastEnd = q(".es-toast");
   results.steps.edgeEnd = {
     editorAtLast,
     toastText: toastEnd ? toastEnd.textContent : null,
+  };
+
+  // --- 選択式(カ)では Cmd+D で向きを変えられず、その旨を告げる(向きのトグルも出ない) ---
+  const choiceShownForD = !!q(".es-choice-list");
+  pressKey({ key: "d", ...CMD_MOD });
+  await sleep(200);
+  results.steps.cmdDirectionChoice = {
+    choiceShown: choiceShownForD,
+    toggleShown: !!q(".es-direction-toggle"),
+    toastText: (q(".es-toast") || {}).textContent || null,
   };
 
   // 末尾まで行ったので、文字を入れる設問(オ)に戻してから後続の検査へ(以降は textarea を前提にしている)
@@ -863,7 +956,8 @@ async function runAssertions() {
 
   // --- 保存が通信で落ちる → 理由と「入力はこの端末に残っている」を出す ---
   window.__esFail.saveNetwork = true;
-  visible(".es-save-btn").click();
+  // 保存は Cmd+S で出す(ボタンと同じ経路に届くことをここで確かめる)
+  pressKey({ key: "s", ...CMD_MOD });
   await waitFor(() => (q(".es-save-status").textContent || "").includes("保存に失敗"), "network save fail", 8000);
   await sleep(200);
   results.steps.saveNetworkFail = {

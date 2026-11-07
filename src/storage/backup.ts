@@ -1,9 +1,19 @@
-export interface FieldBackup {
+/** 設問の編集できる値(テキストと書式) */
+export interface FieldValues {
   text: string;
   direction: number;
   fontSize: number;
   lineHeight: number;
   color: string;
+}
+
+export interface FieldBackup extends FieldValues {
+  /**
+   * 下書きを書いた時点でサーバーが持っていた値(読み込み時、または直近の保存で送った値)。
+   * 復元のとき「この端末で実際に触った設問」を見分けるのに使う。無いのは base を導入する前に書いた下書き。
+   * v:2 のまま任意項目として足している(古い版が読んでも、この項目を無視するだけで壊れない)。
+   */
+  base?: FieldValues;
 }
 
 export type SheetBackup = Record<number, FieldBackup>;
@@ -42,8 +52,22 @@ interface StoredBackupV2 {
   fields: SheetBackup;
 }
 
-function backupKey(studentCode: string, baseSheetId: number, times: number): string {
+/** 1回ぶんの下書きのキー。別タブで同じ回が書かれたかを見分けるため、外からも使えるように export する */
+export function backupKey(studentCode: string, baseSheetId: number, times: number): string {
   return `easysmarky:${studentCode}:${baseSheetId}:${times}`;
+}
+
+/** 設問の値が、base(サーバーが持っていた値)から変わっているか。base が無ければ判断できないので false */
+export function changedFromBase(entry: FieldBackup): boolean {
+  const base = entry.base;
+  if (!base) return false;
+  return (
+    entry.text !== base.text ||
+    entry.direction !== base.direction ||
+    entry.fontSize !== base.fontSize ||
+    entry.lineHeight !== base.lineHeight ||
+    entry.color !== base.color
+  );
 }
 
 function summaryKey(studentCode: string): string {
