@@ -1,4 +1,5 @@
 import { toImageSrc } from "./cropPreview";
+import type { AnswerTextLayout } from "../render/answerLayout";
 import type { SheetRect } from "../model/readingWindow";
 import type { SheetSize } from "../model/sheetGeometry";
 
@@ -24,6 +25,12 @@ export interface RimOptions {
    */
   pageSize: (index: number) => { width: number; height: number } | null;
   isFilled: (fieldId: number) => boolean;
+  /**
+   * 入力した文字を枠の上に重ねて見せる(保存される画像と同じ描画。位置は解答欄の中央)。
+   * 文字が無い設問は null。座標は用紙の絶対座標(rim と同じ)。
+   * 下書きを再開した設問は保存時に既存の位置を引き継ぐため、保存結果とずれることがある。
+   */
+  text?: (fieldId: number) => AnswerTextLayout | null;
   onSelect: (fieldId: number) => void;
 }
 
@@ -223,6 +230,8 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   body.appendChild(legend);
 
   const rimEls = new Map<number, HTMLButtonElement>();
+  /** 入力文字の画像。枠の子にはしない(枠の opacity に引きずられず、枠の上に出すため兄弟にする) */
+  const textEls = new Map<number, HTMLImageElement>();
 
   function currentImages(): string[] {
     return source === "question" ? questionImages : answerImages;
@@ -236,6 +245,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
 
   function renderRims(): void {
     rimEls.clear();
+    textEls.clear();
     rimLayer.innerHTML = "";
     const sheet = currentSheetSize();
     if (!rims || !sheet) {
@@ -272,12 +282,44 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
       }
       rimLayer.appendChild(box);
       rimEls.set(field.id, box);
+
+      // 文字の画像は枠より後に足す(上に重なる)。位置と中身は paintRims で決める
+      if (rims.text) {
+        const textEl = document.createElement("img");
+        textEl.className = "es-rim-text";
+        textEl.dataset.fieldId = String(field.id);
+        textEl.alt = "";
+        textEl.style.display = "none";
+        rimLayer.appendChild(textEl);
+        textEls.set(field.id, textEl);
+      }
     }
     paintRims();
   }
 
+  /** 入力された文字を、用紙座標のまま枠と同じ百分率で置く。文字が無ければ隠す */
+  function paintTexts(sheet: { width: number; height: number } | null): void {
+    if (!rims?.text) return;
+    for (const [fieldId, textEl] of textEls) {
+      const layout = sheet ? rims.text(fieldId) : null;
+      if (!sheet || !layout) {
+        textEl.style.display = "none";
+        continue;
+      }
+      const src = `data:image/png;base64,${layout.png}`;
+      // 同じ画像の再代入でもレイアウトを触らないよう、差があるときだけ書く
+      if (textEl.getAttribute("src") !== src) textEl.setAttribute("src", src);
+      textEl.style.left = `${(layout.x / sheet.width) * 100}%`;
+      textEl.style.top = `${(layout.y / sheet.height) * 100}%`;
+      textEl.style.width = `${(layout.width / sheet.width) * 100}%`;
+      textEl.style.height = `${(layout.height / sheet.height) * 100}%`;
+      textEl.style.display = "block";
+    }
+  }
+
   function paintRims(): void {
     if (!rims) return;
+    paintTexts(currentSheetSize());
     rimLayer.classList.toggle("has-active", activeFieldId != null && rimEls.has(activeFieldId));
     for (const field of rims.fields) {
       const box = rimEls.get(field.id);

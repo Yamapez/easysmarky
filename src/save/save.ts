@@ -1,7 +1,7 @@
 import { ApiError, describeApiError, type ApiErrorKind } from "../api/client";
 import { fetchDigitalReport, saveDigitalReport } from "../api/endpoints";
 import type { DigitalReportQuery, SaveErrorResponse } from "../api/types";
-import type { EditableField } from "../model/field";
+import { isEditableField, type EditableField } from "../model/field";
 import { buildFieldForSave, checkSaveGuard, type BuiltZipEntry } from "../model/toParam";
 import { buildAnswersZip } from "./buildZip";
 
@@ -46,7 +46,7 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
   // 食い違って誤って不一致になるため、ここで送信時点の値を控えておく
   const sentTexts = new Map<number, string>();
   for (const field of params.fields) {
-    if (field.isEditableText) sentTexts.set(field.raw.id, field.text.trim());
+    if (isEditableField(field)) sentTexts.set(field.raw.id, field.text.trim());
   }
 
   const zipBlob = buildAnswersZip(zipEntries);

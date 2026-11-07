@@ -46,8 +46,9 @@ const QUESTION_PAGES = [
 const RIMS = [
   { id: 1, page: 1, part3: "ア", rim: [40, 400, 920, 120], fill: "#ffe3e3" },
   { id: 2, page: 1, part3: "イ", rim: [40, 600, 920, 120], fill: "#e3ffe8" },
-  // 選択式(answer_type:2)の編集不可設問。幅300/1000のように小さめにして、
-  // 設問へジャンプしたときの自動ズームも一緒に検証できるようにする
+  // 画像型(answer_type:3)の編集不可設問。幅300/1000のように小さめにして、
+  // 設問へジャンプしたときの自動ズームも一緒に検証できるようにする。
+  // (選択式は選択肢があれば編集できるので、ここは画像型にしている)
   { id: 4, page: 1, part3: "エ", rim: [40, 780, 300, 100], fill: "#f2e3ff", locked: true },
   // 2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
   // cut_margin ぶんが用紙の外へ出るので、切り出しのクランプ(src/ui/cropPreview.ts)も
@@ -60,6 +61,10 @@ const RIMS = [
   // 用紙 800x1120・余白36 → 切り出し 172x332 → 画像ピクセル(1.25倍)で 215x415。
   // 1ページ目に置くと設問ストリップの添字がずれて既存の検査を巻き込むので2ページ目。
   { id: 5, page: 2, part3: "オ", rim: [620, 300, 100, 260], fill: "#ffefc2" },
+  // 記号問題(answer_type:2・選択式)。選択肢は配列で返し、既存の答えは「ウ」(answer_texts[0] が既にある形)。
+  // 2ページ目の末尾に置くので、1ページ目の検査(設問ア・イ・エ)や「次の未入力」の連鎖は変わらない。
+  // 設問の並びは page→id 順なので、オ の後ろに来る。
+  { id: 6, page: 2, part3: "カ", rim: [40, 480, 500, 100], fill: "#e6fff9", choices: ["ア", "イ", "ウ", "エ"], existing: "ウ" },
 ];
 
 function makePage(text, lines, bg, page, rims) {
@@ -128,13 +133,21 @@ const SHEET_LIST = {
   max_report_count: 1, report_nos: [1], sheet_types: [1],
 };
 
-function field(id, page, part3, rim, answerTexts, answerType) {
+function field(id, page, part3, rim, answerTexts, answerType, choices) {
   return {
     id, page, kind: 0, part1: "問1", part2: "(1)", part3,
     allot: 5, rim, answer_type: answerType || 1,
-    answer_texts: answerTexts || [], answer_images: [], base64_canvas: null, choice_texts: [],
+    answer_texts: answerTexts || [], answer_images: [], base64_canvas: null, choice_texts: choices || [],
   };
 }
+
+// 記号問題カの既存の答え「ウ」。位置は null(保存時に中央へ置かれる)
+const EXISTING_CHOICE_TEXT = {
+  id: 13, base_sheet_field_id: 6, idx: 0,
+  text: "ウ", color: "#000000",
+  font_size: 32, line_height: 0,
+  x: null, y: null, width: null, height: null, direction: 1,
+};
 
 // 設問1は「下書きを再開した」状態を再現するため、既存の answer_texts を持たせる。
 // これが無いと updatePreview() の空テキスト早期returnに入り、
@@ -169,8 +182,12 @@ const REPORT = {
   },
   base_sheet_fields: RIMS.map((r) =>
     field(r.id, r.page, r.part3, r.rim,
-          r.id === 1 ? [EXISTING_TEXT] : r.id === 5 ? [EXISTING_TALL_TEXT] : [],
-          r.locked ? 2 : 1)),
+          r.id === 1 ? [EXISTING_TEXT]
+            : r.id === 5 ? [EXISTING_TALL_TEXT]
+            : r.id === 6 ? [EXISTING_CHOICE_TEXT]
+            : [],
+          r.choices ? 2 : r.locked ? 3 : 1,
+          r.choices)),
   base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
   base64_answer_images: [ANSWER_PAGE_1, ANSWER_PAGE_2],
   message: null, before_student_sheet_id: null, subject_name: "国語総合 第1回",
@@ -207,6 +224,8 @@ window.fetch = async (input, init) => {
       entry.zipBytes = file ? file.size : null;
       const params = JSON.parse(form.get("param_base_sheet_fields"));
       entry.fieldCount = params.length;
+      // 選択式など、個々の設問の送信内容(位置・大きさ・文字)を検査で見られるように残す
+      entry.answerTexts = params.map((p) => ({ id: p.id, answer_texts: p.answer_texts }));
       // 実サーバと同じく、保存された内容が以後のGETに反映されるようにする
       for (const p of params) {
         const target = REPORT.base_sheet_fields.find((f) => f.id === p.id);
@@ -600,6 +619,103 @@ async function runAssertions() {
     fit: (q(".es-fit").textContent || "").trim(),
   };
 
+  // --- 入力した文字が左の解答用紙の枠の上にも出る(保存される画像と同じ位置) ---
+  // 入力後に枠の中へ文字の画像が出ること、空にすると消えること、ページを送って戻っても残ることを見る。
+  // 検査のあとは入力を元に戻し、後続の手順(ショートカット・保存)の前提を変えない
+  {
+    const typedText = ta.value;
+    const probe = () => {
+      const rim = q(".es-rim.active");
+      if (!rim) return null;
+      const id = rim.dataset.fieldId;
+      const txt = qa(`.es-rim-text[data-field-id="${id}"]`)[0] || null;
+      if (!txt) return { id, display: null };
+      const r = rim.getBoundingClientRect();
+      const t = txt.getBoundingClientRect();
+      return {
+        id,
+        display: txt.style.display,
+        isPng: (txt.getAttribute("src") || "").startsWith("data:image/png;base64,"),
+        width: t.width,
+        height: t.height,
+        centerDx: (t.left + t.width / 2) - (r.left + r.width / 2),
+        centerDy: (t.top + t.height / 2) - (r.top + r.height / 2),
+        pointerEvents: getComputedStyle(txt).pointerEvents,
+      };
+    };
+    const afterType = probe();
+    ta.value = "";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(200);
+    const afterClear = probe();
+    ta.value = typedText;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(200);
+    // ページを送って戻る(枠も文字も作り直される)
+    const pager = q(".es-viewer-pager");
+    const next = pager && pager.querySelector('button[aria-label="次のページ"]');
+    const prev = pager && pager.querySelector('button[aria-label="前のページ"]');
+    if (next && prev) {
+      next.click();
+      await sleep(200);
+      prev.click();
+      await sleep(200);
+    }
+    results.steps.viewerText = {
+      afterType,
+      afterClear,
+      afterPageRoundTrip: probe(),
+      restoredTyped: ta.value === typedText,
+    };
+  }
+
+  // --- 記号問題(カ): 選択肢を選ぶと左の枠にも文字が出る。←→ で前後へ、無回答で消える ---
+  // 既存の答えは「ウ」。ここで「エ」に選び直したままにして、次の保存で送られる内容を見る
+  // (選び直したので中央に置き直される。ZIP にも入る)。最後は入力中のイに戻す(後続の手順の前提)
+  {
+    const chipOf = (ch) => qa(".es-strip-chip").find((c) => (c.textContent || "").includes(ch));
+    const btnOf = (label) => qa(".es-choice-btn").find((b) => b.textContent.trim() === label);
+    const activeLabel = () => (qa(".es-choice-btn.active")[0]?.textContent || "").trim();
+    const shownOf = () => {
+      const el = qa('.es-rim-text[data-field-id="6"]')[0];
+      return el ? { display: el.style.display, isPng: (el.getAttribute("src") || "").startsWith("data:image/png;base64,") } : null;
+    };
+    const progressNow = () => (q(".es-progress-count").textContent || "").trim();
+    const out = {};
+    chipOf("カ").click();
+    await sleep(300);
+    out.opened = (q(".es-editor-name").textContent || "").trim();
+    out.buttons = qa(".es-choice-btn").map((b) => b.textContent.trim());
+    out.initialActive = activeLabel();
+    out.initialShown = shownOf();
+    out.progressBefore = progressNow();
+
+    btnOf("イ").click();
+    await sleep(200);
+    out.afterPickI = { active: activeLabel(), shown: shownOf() };
+
+    q(".es-choice-list").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, composed: true }));
+    await sleep(100);
+    out.afterRight = activeLabel();
+
+    btnOf("無回答").click();
+    await sleep(200);
+    out.afterBlank = { active: activeLabel(), shown: shownOf(), progress: progressNow() };
+
+    q(".es-choice-list").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, composed: true }));
+    await sleep(100);
+    out.afterLeft = activeLabel();
+
+    btnOf("エ").click();
+    await sleep(200);
+    out.final = { active: activeLabel(), shown: shownOf(), progress: progressNow() };
+
+    results.steps.choice = out;
+    // 入力中のイに戻す(キーボードショートカットの前提は変えない)
+    chipOf("イ").click();
+    await sleep(300);
+  }
+
   // --- キーボードショートカット(Ctrl+↵ で次の設問) ---
   // Shadow DOM の外(window)で受けているので composed: true が要る
   const beforeShortcut = (q(".es-editor-name").textContent || "").trim();
@@ -656,7 +772,7 @@ async function runAssertions() {
   results.steps.unloadDirty = unloadPrevented();
 
   // --- 全設問が入ると完了の案内に変わる ---
-  // ここまでで ウ が埋まり、4/4 になっている
+  // ここまでで ウ が埋まり、5/5 になっている(カは最初から入力済み)
   results.steps.allFilled = {
     progress: (q(".es-progress-count").textContent || "").trim(),
     saveNote: (q(".es-save-note").textContent || "").trim(),
@@ -671,21 +787,27 @@ async function runAssertions() {
   results.steps.altEnter = { toastText: toastAlt ? toastAlt.textContent : null };
 
   // --- 最後の設問で進もうとしたら、動けないことを告げる ---
-  // 現在は ウ。Ctrl+↵ で最後の編集可能な設問 オ へ、もう一度押すと告知になる
-  q("textarea.es-textarea").dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
-  );
+  // 現在は ウ。Ctrl+↵ で オ、もう一度で最後の編集可能な設問 カ(選択式)へ、さらに押すと告知になる
+  // 選択式には textarea が無いので、キーは今の入力欄(無ければ選択肢一覧)に送る
+  const keyTarget = () => q("textarea.es-textarea") || q(".es-choice-list");
+  const ctrlEnter = () =>
+    keyTarget().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }));
+  ctrlEnter();
+  await sleep(300);
+  ctrlEnter();
   await sleep(300);
   const editorAtLast = (q(".es-editor-name").textContent || "").trim();
-  q("textarea.es-textarea").dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, composed: true }),
-  );
+  ctrlEnter();
   await sleep(200);
   const toastEnd = q(".es-toast");
   results.steps.edgeEnd = {
     editorAtLast,
     toastText: toastEnd ? toastEnd.textContent : null,
   };
+
+  // 末尾まで行ったので、文字を入れる設問(オ)に戻してから後続の検査へ(以降は textarea を前提にしている)
+  qa(".es-strip-chip").find((c) => (c.textContent || "").includes("オ")).click();
+  await sleep(300);
 
   // --- 設問チップは左右キーで隣へフォーカスを移す(開くのは Enter / Space に任せる) ---
   const chipList = qa(".es-strip-chip");
@@ -744,6 +866,30 @@ async function runAssertions() {
     status: q(".es-save-status").textContent,
     notice: q(".es-error") ? q(".es-error").textContent : "",
   };
+
+  // --- 記号問題を「無回答」にして保存する。公式と同じ 1x1 の空スタンプとして送られる ---
+  {
+    const chipOfKa = qa(".es-strip-chip").find((c) => (c.textContent || "").includes("カ"));
+    chipOfKa.click();
+    await sleep(300);
+    qa(".es-choice-btn").find((b) => b.textContent.trim() === "無回答").click();
+    await sleep(200);
+    visible(".es-save-btn").click();
+    await waitFor(() => {
+      const t = q(".es-save-status").textContent || "";
+      return t && !t.includes("保存中");
+    }, "blank choice save", 8000);
+    await sleep(200);
+    const lastPost = POST_LOG[POST_LOG.length - 1];
+    const choicePost = lastPost && lastPost.answerTexts ? lastPost.answerTexts.find((p) => p.id === 6) : null;
+    results.steps.choiceBlankSave = {
+      status: q(".es-save-status").textContent,
+      stamps: choicePost ? choicePost.answer_texts : null,
+    };
+    // 入力中のイに戻す(後続の離脱・Esc の検査は textarea を前提にしている)
+    qa(".es-strip-chip").find((c) => (c.textContent || "").includes("イ")).click();
+    await sleep(300);
+  }
 
   // --- 背景スクロールのロック ---
   results.steps.scrollLock = {

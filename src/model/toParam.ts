@@ -4,9 +4,10 @@ import {
   type ParamAnswerText,
   type ParamBaseSheetField,
 } from "../api/types";
+import { stampOffsetInCut } from "../render/answerLayout";
 import { measureText } from "../render/measure";
 import { renderAnswerText } from "../render/renderText";
-import { fieldHasBinaryContent, type EditableField } from "./field";
+import { fieldHasBinaryContent, isEditableField, type EditableField } from "./field";
 
 export interface SaveGuardResult {
   blocked: boolean;
@@ -52,6 +53,11 @@ interface AnswerTextDraft {
   /** 既存のx,y(移動させない)。未指定(新規)ならフィールド中央に配置する */
   existingX?: number | null;
   existingY?: number | null;
+  /**
+   * 選択式の「無回答」(text が空)。公式 app.js の選択処理と同じく、1x1 のスタンプとして送り、
+   * PNG は既定の「テキスト」を使わず空文字で描く(公式の ce(n,"") に相当)
+   */
+  blankChoice?: boolean;
 }
 
 function buildAnswerText(
@@ -61,16 +67,20 @@ function buildAnswerText(
   rimHeight: number,
   cutMargin: number,
 ): { meta: ParamAnswerText; zipEntry: BuiltZipEntry | null } {
-  const size = measureText({
-    text: draft.text,
-    fontSize: draft.fontSize,
-    lineHeight: draft.lineHeight,
-    direction: draft.direction as typeof Direction.Horizon,
-  });
+  // measureText は空文字を「テキスト」として計測するので、無回答は 1x1 を直接使う
+  const size = draft.blankChoice
+    ? { width: 1, height: 1 }
+    : measureText({
+        text: draft.text,
+        fontSize: draft.fontSize,
+        lineHeight: draft.lineHeight,
+        direction: draft.direction as typeof Direction.Horizon,
+      });
 
   const hasExistingPosition = draft.existingX != null && draft.existingY != null;
-  const x = hasExistingPosition ? (draft.existingX as number) : (rimWidth + 2 * cutMargin - size.width) / 2;
-  const y = hasExistingPosition ? (draft.existingY as number) : (rimHeight + 2 * cutMargin - size.height) / 2;
+  const centered = stampOffsetInCut(rimWidth, rimHeight, cutMargin, size);
+  const x = hasExistingPosition ? (draft.existingX as number) : centered.x;
+  const y = hasExistingPosition ? (draft.existingY as number) : centered.y;
 
   const meta: ParamAnswerText = {
     id: draft.id,
@@ -89,7 +99,22 @@ function buildAnswerText(
 
   const trimmed = draft.text.trim();
   let zipEntry: BuiltZipEntry | null = null;
-  if (trimmed && size.width > 0 && size.height > 0) {
+  if (draft.blankChoice) {
+    // 無回答でも ZIP には入れる。以前の選択の PNG が残らないよう、空の画像で上書きする
+    const png = renderAnswerText(
+      {
+        text: "",
+        width: size.width,
+        height: size.height,
+        font_size: draft.fontSize,
+        line_height: draft.lineHeight,
+        color: draft.color,
+        direction: draft.direction,
+      },
+      "",
+    );
+    zipEntry = { filename: `answer_text_${fieldId}_${draft.idx}.png`, base64: png };
+  } else if (trimmed && size.width > 0 && size.height > 0) {
     const png = renderAnswerText({
       text: draft.text,
       width: size.width,
@@ -119,8 +144,14 @@ export function buildFieldForSave(field: EditableField, cutMargin: number): Buil
   const zipEntries: BuiltZipEntry[] = [];
   const answerTexts: ParamAnswerText[] = [];
 
+  // 選択式は、編集可能なとき(複数スタンプでない)だけ選択として扱う。複数スタンプの設問は既存のまま送る
+  const choiceEditable = field.isEditableChoice && isEditableField(field);
+
   existingTexts.forEach((t, i) => {
-    const isPrimaryEditable = i === 0 && field.isEditableText;
+    const isPrimaryEditable = i === 0 && (field.isEditableText || choiceEditable);
+    // 選択式は、選び直したとき(または文字が変わったとき)だけ中央に置き直す(公式の選択処理と同じ)。
+    // 触っていなければ既存の位置・大きさをそのまま送る
+    const choiceChanged = choiceEditable && (field.choiceEdited || field.text !== (t.text ?? ""));
     const draft: AnswerTextDraft = isPrimaryEditable
       ? {
           id: t.id,
@@ -130,8 +161,9 @@ export function buildFieldForSave(field: EditableField, cutMargin: number): Buil
           lineHeight: field.lineHeight,
           color: field.color,
           direction: field.direction,
-          existingX: t.x,
-          existingY: t.y,
+          existingX: choiceChanged ? null : t.x,
+          existingY: choiceChanged ? null : t.y,
+          blankChoice: choiceEditable && field.text === "",
         }
       : {
           id: t.id,
@@ -150,8 +182,8 @@ export function buildFieldForSave(field: EditableField, cutMargin: number): Buil
     if (zipEntry) zipEntries.push(zipEntry);
   });
 
-  // 元々テキストが存在しなかった設問に、ユーザーが新規入力した場合
-  if (field.isEditableText && existingTexts.length === 0 && field.text.trim()) {
+  // 元々テキストが存在しなかった設問に、ユーザーが新規入力した場合(選択式は選んだときだけ作る)
+  if ((field.isEditableText || field.isEditableChoice) && existingTexts.length === 0 && field.text.trim()) {
     const draft: AnswerTextDraft = {
       id: null,
       idx: 0,
