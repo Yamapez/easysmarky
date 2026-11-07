@@ -68,6 +68,8 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
   let header: HeaderHandle;
   let scrollLockBackup: { html: string; body: string } | null = null;
   let leaveGuard: (() => boolean) | null = null;
+  /** 一覧で回を開いたときの一覧のスクロール位置(戻ったときに復元する) */
+  let listScrollTop = 0;
 
   /** 画面を離れてよいか。未保存の確認で「やめる」が選ばれたら false */
   function canLeave(): boolean {
@@ -238,7 +240,7 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     header.setLeaveGuard(null);
   }
 
-  function showSheetPicker(): void {
+  function showSheetPicker(restoreScrollTop = 0): void {
     content.innerHTML = "";
     resetHeader();
     // 一覧は全画面幅だと読みにくいので中央寄せのカラムに収める
@@ -246,14 +248,20 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
     column.className = "es-column";
     content.appendChild(column);
     renderSheetPicker(column, {
-      onSelect: (sheet: SelectedSheet) => showFormView(sheet),
-    }).catch((err) => showError(content, err, showSheetPicker));
+      onSelect: (sheet: SelectedSheet) => {
+        // 回を開く直前の位置。「← 科目一覧」で戻ったときに同じ位置へ戻す
+        listScrollTop = column.scrollTop;
+        showFormView(sheet);
+      },
+      onError: (err) => showError(content, err, () => showSheetPicker()),
+      restoreScrollTop,
+    });
   }
 
   function showFormView(sheet: SelectedSheet): void {
     content.innerHTML = "";
     resetHeader();
-    renderFormView(content, { sheet, header, onBack: showSheetPicker }).catch((err) => {
+    renderFormView(content, { sheet, header, onBack: () => showSheetPicker(listScrollTop) }).catch((err) => {
       resetHeader();
       showError(content, err, () => showFormView(sheet));
     });

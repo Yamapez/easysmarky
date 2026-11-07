@@ -13,6 +13,7 @@ import {
   saveSheetSummary,
   type SheetBackup,
 } from "../storage/backup";
+import { saveLastSheet } from "../storage/listState";
 import { createFieldEditor, fieldLabel, fieldShortLabel, type FieldEditorHandle } from "./fieldEditor";
 import type { HeaderHandle } from "./overlay";
 import { readingWindowRect } from "../model/readingWindow";
@@ -73,6 +74,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   };
 
   const report = await fetchDigitalReport(query);
+  // 報告を開けたら「続きから」用に残す(一覧の先頭に出す)
+  saveLastSheet(sheet.studentCode, sheet);
   const cutMargin = report.cut_margin;
   const answerImages = report.base64_answer_images ?? [];
   const questionImages = report.base64_question_images ?? [];
