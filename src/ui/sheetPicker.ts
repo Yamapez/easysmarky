@@ -87,7 +87,7 @@ function publishedSheets(row: StudentSubjectRow): SheetEntry[] {
 }
 
 export async function renderSheetPicker(container: HTMLElement, opts: SheetPickerOptions): Promise<void> {
-  container.innerHTML = '<div class="es-loading">読み込み中...</div>';
+  container.innerHTML = '<div class="es-loading" role="status">読み込み中...</div>';
 
   const currentUser = await fetchCurrentUser();
   const studentCode = studentCodeFromLoginId(currentUser.user.login_id);

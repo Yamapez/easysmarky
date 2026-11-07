@@ -2,6 +2,7 @@ import { OVERLAY_STYLES } from "./styles";
 import { renderSheetPicker, type SelectedSheet } from "./sheetPicker";
 import { renderFormView } from "./formView";
 import { describeApiError } from "../api/client";
+import { installViewportSync, type ViewportSync } from "./viewport";
 
 export interface EasySmarkyController {
   toggle: () => void;
@@ -61,6 +62,7 @@ function showError(container: HTMLElement, err: unknown, onRetry: () => void): v
 
 export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyController {
   let host: HTMLElement | null = null;
+  let viewportSync: ViewportSync | null = null;
   let shadow: ShadowRoot;
   let content: HTMLElement;
   let header: HeaderHandle;
@@ -88,6 +90,7 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
 
     const root = document.createElement("div");
     root.className = "es-root";
+    viewportSync = installViewportSync(root);
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
 
@@ -210,6 +213,8 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
   function setVisible(visible: boolean): void {
     if (!host) return;
     host.style.display = visible ? "block" : "none";
+    if (visible) viewportSync?.start();
+    else viewportSync?.stop();
     // 全画面オーバーレイの背後でホストページがスクロールしてしまわないようロックする。
     // body だけでは実際にスクロールが止まらないため html 側も一緒に固定する。
     const html = document.documentElement;

@@ -1,4 +1,8 @@
-export const OVERLAY_STYLES = `
+import { SAFETY_CSS } from "./styles/safety";
+import { LIST_CSS } from "./styles/list";
+import { MOBILE_CSS } from "./styles/mobile";
+
+const BASE_CSS = `
 :host, * { box-sizing: border-box; }
 .es-root {
   position: fixed;
@@ -1039,3 +1043,6 @@ button:focus-visible,
   .es-savebar { padding: 8px 12px 12px; }
 }
 `;
+
+// 方向別の CSS は末尾に連結する。各担当は自分のファイル(styles/*.ts)にだけ追記する
+export const OVERLAY_STYLES = BASE_CSS + SAFETY_CSS + LIST_CSS + MOBILE_CSS;

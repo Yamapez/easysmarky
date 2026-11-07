@@ -60,7 +60,7 @@ function formatDeadline(at: string | null): string {
 }
 
 export async function renderFormView(container: HTMLElement, opts: FormViewOptions): Promise<void> {
-  container.innerHTML = '<div class="es-loading">読み込み中...</div>';
+  container.innerHTML = '<div class="es-loading" role="status">読み込み中...</div>';
 
   const { sheet } = opts;
   const query: DigitalReportQuery = {
