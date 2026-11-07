@@ -6,7 +6,7 @@ import { applyGridStyle } from "../model/gridLayout";
 import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../model/sheetGeometry";
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
-import { fingerprintSent, fingerprintsOf, normalizeText } from "../save/conflict";
+import { binarySnapshotsOf, fingerprintSent, fingerprintsOf, normalizeText } from "../save/conflict";
 import {
   archiveBackup,
   backupKey,
@@ -23,6 +23,7 @@ import {
   type SheetBackup,
 } from "../storage/backup";
 import { saveLastSheet } from "../storage/listState";
+import { loadPrefs, onPrefsChange } from "../storage/prefs";
 import { createFieldEditor, fieldLabel, fieldShortLabel, type FieldEditorHandle } from "./fieldEditor";
 import type { HeaderHandle } from "./overlay";
 import { readingWindowRect } from "../model/readingWindow";
@@ -94,6 +95,13 @@ function formatDeadline(at: string | null): string {
   return `締切 ${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+/**
+ * 開いている回の画面を、設定の変更に合わせて直す関数。画面は同時に一つしか開かないので、
+ * 購読はモジュールで一つだけ持ち、新しい画面が来るたびに差し替える(画面ごとに購読を積むと、捨てた画面が残る)。
+ */
+let refreshActiveForm: (() => void) | null = null;
+onPrefsChange(() => refreshActiveForm?.());
+
 export async function renderFormView(container: HTMLElement, opts: FormViewOptions): Promise<void> {
   container.innerHTML = '<div class="es-loading" role="status">読み込み中...</div>';
 
@@ -119,6 +127,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     .sort((a, b) => a.page - b.page || a.id - b.id)
     .map(createEditableField);
   const guard = checkSaveGuard(fields);
+  // 読み込み時点の手書き・画像の中身。同意のあとに増えた(または変わった)分は送らない判定に使う
+  let consentedBinary = binarySnapshotsOf(report.base_sheet_fields);
+  // 設定の許可のキャッシュ。入力のたびに localStorage を読まないよう、設定の変更のときだけ読み直す
+  let binaryAllowed = loadPrefs().allowBinaryLoss;
 
   const fieldById = new Map(fields.map((f) => [f.raw.id, f]));
   const editableCount = fields.filter(isEditable).length;
@@ -483,7 +495,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       rules: SUMMARY_RULES,
       total: editableCount,
       filled: fields.filter(isFilledField).length,
-      blocked: guard.blocked,
+      blocked: isSaveLocked(),
       savedAt,
     });
   }
@@ -546,7 +558,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   /** 保存バーの状態表示。未保存の変更の有無と、最後にサーバーで確認できた時刻から決める */
   function refreshSaveState(): void {
-    if (dirty) {
+    if (isSaveLocked()) {
+      // 保存できないのに「下書き保存してください」と出さないよう、理由を先に出す
+      setSaveStatus("手書き・画像のある回は保存できません(右上の「設定」で許可できます)", "#a02622");
+    } else if (dirty) {
       setSaveStatus("未保存の変更があります。下書き保存してください。", "#8a5a00");
     } else if (serverSavedAt != null) {
       setSaveStatus(`保存済み ${formatTime(serverSavedAt)}(サーバーで反映を確認しました)`, "#2e7d32");
@@ -716,13 +731,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   }
 
   // ---------------------------------------------------------------- お知らせ欄
-  if (guard.blocked) {
-    const warn = document.createElement("div");
-    warn.className = "es-warning";
-    warn.textContent = guard.reason ?? "";
-    notices.appendChild(warn);
-  }
-
   // 下書きの復元。復元バーは起動時に読んだ existingBackup から作り直す(ストレージは読み直さない)
   let restoreBarEl: HTMLElement | null = null;
   /** 提示の説明行。最初の入力で退避したときに文言を更新する */
@@ -1015,13 +1023,39 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   }
 
   let saving = false;
+  /** 保存後に出す、手書き・画像の件数の控え */
+  let binaryNoteEl: HTMLElement | null = null;
+
+  /** 保存ボタン・⌘S を止めるか。手書きがあり、まだ同意していないとき true */
+  function isSaveLocked(): boolean {
+    return guard.blocked && !binaryAllowed;
+  }
+
+  /** 保存ボタンの有効・無効を、送信中かどうかと同意の状態から決め直す */
+  function refreshSaveButton(): void {
+    saveBtn.disabled = saving || isSaveLocked();
+  }
+
+  function showBinaryNote(before: number, after: number | undefined): void {
+    binaryNoteEl?.remove();
+    const note = document.createElement("div");
+    note.className = "es-warning";
+    note.textContent =
+      after === undefined
+        ? `手書き・画像の解答: 保存前 ${before} 件。保存後の件数は確かめられませんでした。`
+        : `手書き・画像の解答: 保存前 ${before} 件 → 保存後 ${after} 件(サーバーを再取得して数えた件数です)。`;
+    notices.appendChild(note);
+    binaryNoteEl = note;
+  }
 
   async function runSave(options: { overwrite?: boolean } = {}): Promise<void> {
-    if (saving || guard.blocked) return;
+    if (saving || isSaveLocked()) return;
     saving = true;
     saveBtn.disabled = true;
     saveNotice?.remove();
     saveNotice = null;
+    binaryNoteEl?.remove();
+    binaryNoteEl = null;
     // 送信の時点で組み立てた内容が保存対象。ここより後の編集は次の保存に回る
     const seqAtStart = editSeq;
     setSaveStatus("保存中...", "#7a848a");
@@ -1035,10 +1069,15 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         verifyQuery: query,
         baseline: serverFingerprints,
         overwrite: options.overwrite === true,
+        // 同意があるのは、読み込み時に手書きがあって保存をブロックしていた回だけ
+        allowBinaryLoss: guard.blocked,
+        consentedBinary,
       });
       if (result.ok) {
         // POST が通った。次の保存で他所での変更を見つける基準は、照合できたかに関わらず今の状態に合わせる
         if (result.nextBaseline) serverFingerprints = result.nextBaseline;
+        // 手書きの基準も、保存後に確かめた内容に合わせる(照合できたときだけ)
+        if (result.nextBinary) consentedBinary = result.nextBinary;
         for (const [id, values] of result.sent ?? []) baseValues.set(id, values);
       }
       if (result.conflictFieldIds && result.conflictFieldIds.length > 0) {
@@ -1064,7 +1103,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
           }
         }
         setSaveStatus("保存に失敗しました。", "#a02622");
-        showSaveNotice(message, []);
+        showSaveNotice(message, result.binaryGrownFieldIds ?? []);
       } else if (result.mismatchedFieldIds && result.mismatchedFieldIds.length > 0) {
         // 反映が確認できていないので、未保存扱いのまま離脱時に確認を出す。
         // ステータスは短く、詳細と操作はカードに分けて二重表示を避ける
@@ -1094,18 +1133,31 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         }
         refreshSaveState();
       }
+      if (result.ok && result.binaryBefore) showBinaryNote(result.binaryBefore, result.binaryAfter);
     } catch {
       const message = "予期せぬエラーが発生しました。通信状況をご確認のうえ再度お試しください。";
       setSaveStatus(message, "#a02622");
       showSaveNotice(message, []);
     } finally {
       saving = false;
-      saveBtn.disabled = guard.blocked;
+      refreshSaveButton();
     }
   }
 
-  saveBtn.disabled = guard.blocked;
+  refreshSaveButton();
+  refreshSaveState();
   saveBtn.addEventListener("click", () => void runSave());
+
+  // 設定(手書きのある回の保存の許可)が変わったら、この画面の許可・保存の可否・一覧の要約を直す。
+  // 画面が捨てられていれば何もしない(次に開いた画面が差し替える)
+  refreshActiveForm = () => {
+    if (!form.isConnected) return;
+    binaryAllowed = loadPrefs().allowBinaryLoss;
+    if (guard.blocked) persistSummary(Date.now());
+    // 送信中は状態表示(保存中...)を上書きしない。送信が終われば、そのときの表示になる
+    if (!saving) refreshSaveState();
+    refreshSaveButton();
+  };
 
   // ---------------------------------------------------------------- 操作
   prevBtn.addEventListener("click", () => stepField(-1));
@@ -1127,7 +1179,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   /** Cmd+S。保存できないときは黙って戻らず、理由を告げる */
   function saveByShortcut(): void {
-    if (guard.blocked) {
+    if (isSaveLocked()) {
       announce(guard.reason ?? "このシートは保存できません");
       return;
     }
@@ -1137,6 +1189,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   /** Cmd+D。テキスト設問以外では変えられないので、その旨を告げる */
   function toggleDirectionByShortcut(): void {
     if (!editor?.toggleDirection()) announce("この設問は書字方向を変えられません");
+  }
+
+  /** 設定ダイアログが開いているか(同じ shadow root の中にある) */
+  function settingsOpen(): boolean {
+    const scope = form.getRootNode() as ParentNode;
+    const el = scope.querySelector?.(".es-settings") as HTMLElement | null;
+    return !!el && el.style.display === "flex";
   }
 
   // ショートカットはオーバーレイ全体で効かせたいので window で受ける。
@@ -1149,6 +1208,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     if (form.getClientRects().length === 0) return; // オーバーレイ非表示中
     // 読むモード中は、裏の入力欄へのフォーカス移動や保存を起こさない(読んでいる間に回答が変わるのを防ぐ)
     if (reader) return;
+    // 設定が開いている間は、裏の画面で保存や移動が起きないようにする(Esc は overlay が設定だけを閉じる)
+    if (settingsOpen()) return;
     // 日本語入力の変換中のキーは、確定操作として入力欄に任せる
     if (event.isComposing || event.keyCode === 229) return;
     if (event.altKey && event.key === "Enter") {

@@ -11,13 +11,18 @@ export interface Prefs {
   zoom: number | null;
   /** 手動で選んだ書字方向。答えが無い設問の既定値に使う。null は「記憶なし」 */
   direction: Direction | null;
+  /**
+   * 手書き・画像の解答がある回でも下書き保存してよいか(設定の項目)。既定は false(保存をブロック)。
+   * 保存すると、その回の手書き・画像の解答が消えるおそれがある。端末共通なので、共有端末では次の人にも効く。
+   */
+  allowBinaryLoss: boolean;
 }
 
 /** 記憶してよい倍率の範囲(ビューアの ZOOM_STEPS の最小〜最大に合わせる) */
 export const PREF_ZOOM_MIN = 1;
 export const PREF_ZOOM_MAX = 4;
 
-const DEFAULT_PREFS: Prefs = { v: 1, zoom: null, direction: null };
+const DEFAULT_PREFS: Prefs = { v: 1, zoom: null, direction: null, allowBinaryLoss: false };
 
 function sanitize(parsed: Partial<Prefs>): Prefs {
   const zoom =
@@ -26,7 +31,9 @@ function sanitize(parsed: Partial<Prefs>): Prefs {
       ? parsed.zoom
       : null;
   const direction = parsed.direction === 1 || parsed.direction === 2 ? parsed.direction : null;
-  return { v: 1, zoom, direction };
+  // 古い版の値(項目なし)は false として読む。許可は明示的に true のときだけ効く
+  const allowBinaryLoss = parsed.allowBinaryLoss === true;
+  return { v: 1, zoom, direction, allowBinaryLoss };
 }
 
 export function loadPrefs(): Prefs {
@@ -41,12 +48,33 @@ export function loadPrefs(): Prefs {
   }
 }
 
-/** 指定した項目だけ書き換える。他の項目は保つ。null を渡すとその項目の記憶を消す */
-export function updatePrefs(patch: Partial<Pick<Prefs, "zoom" | "direction">>): void {
+const listeners = new Set<() => void>();
+
+/** 設定が変わったことを知らせる購読。戻り値の関数で外す。開いている画面が、設定の変更をその場で反映するために使う */
+export function onPrefsChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/**
+ * 指定した項目だけ書き換える。他の項目は保つ。null を渡すとその項目の記憶を消す。
+ * 戻り値は書けたかどうか。書けなければ、購読には知らせない(表示が「変わった」と誤認させないため)。
+ */
+export function updatePrefs(patch: Partial<Pick<Prefs, "zoom" | "direction" | "allowBinaryLoss">>): boolean {
   try {
     const next = sanitize({ ...loadPrefs(), ...patch });
     localStorage.setItem(KEY, JSON.stringify(next));
   } catch {
-    /* 保存できない環境では記憶しないだけ */
+    return false;
   }
+  for (const listener of listeners) {
+    try {
+      listener();
+    } catch {
+      /* 1つの購読の失敗で、他の画面への通知を止めない */
+    }
+  }
+  return true;
 }

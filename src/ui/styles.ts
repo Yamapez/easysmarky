@@ -252,6 +252,52 @@ const BASE_CSS = `
   font-family: inherit;
 }
 .es-warning-actions button.secondary { border-color: #d8c3a2; }
+/* ===== 設定ダイアログ(ヘッダの「設定」から開く) ===== */
+.es-settings {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(20, 30, 36, 0.45);
+}
+.es-settings-box {
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  overflow: auto;
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  font-size: 14px;
+  color: #1d2b33;
+  line-height: 1.6;
+}
+.es-settings-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+.es-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.es-settings-row input { width: 20px; height: 20px; margin: 0; flex: none; }
+.es-settings-note { margin: 8px 0 0; font-size: 13px; color: #5b666c; }
+.es-settings-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+.es-settings-actions button {
+  border: none;
+  background: #2196c9;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  min-height: 40px;
+  font-family: inherit;
+}
 .es-error {
   background: #fdecea;
   border: 1px solid #f5989d;
@@ -1074,6 +1120,9 @@ button:focus-visible,
   .es-progress-count, .es-autosave { display: none; }
   .es-progress-bar { width: 52px; }
   .es-header-right { gap: 8px; }
+  /* 狭い幅では、右側のボタン(設定・閉じるなど)が画面の外へ切れないよう、ヘッダを折り返す */
+  .es-header { flex-wrap: wrap; }
+  .es-header-right { flex-wrap: wrap; justify-content: flex-end; }
   .es-editor-head { padding: 8px 12px; }
   .es-editor-name { font-size: 15px; }
   .es-editor-body { padding: 10px 12px; }

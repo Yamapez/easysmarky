@@ -30,4 +30,20 @@
 
   // 設定なし。保存の競合・失敗系の検査は、開いたあとに window.__esServerSet / __esFail で作る
   window.__esScenarios.d4 = {};
+
+  // 手書きのある回。ウ(3)に手書き1件、イ(2)に canvas の筆跡がある(件数の合計は2)。
+  // 手書きの同意(保存をブロックしたうえでの明示的な同意)と、同意のあとの増加を検査する
+  window.__esScenarios.d4binary = {
+    serverHandwrite: [3],
+    serverCanvas: { 2: "data:image/png;base64,AAAA" },
+  };
+
+  // 同じ回で、設定の「手書きのある回でも保存」が端末に残っている状態(再読み込みのあとも許可が残ることを見る)
+  window.__esScenarios.d4binaryOn = {
+    serverHandwrite: [3],
+    serverCanvas: { 2: "data:image/png;base64,AAAA" },
+    seedStorage: {
+      "easysmarky:prefs": JSON.stringify({ v: 1, zoom: null, direction: null, allowBinaryLoss: true }),
+    },
+  };
 })();

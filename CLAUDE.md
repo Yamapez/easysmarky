@@ -69,7 +69,7 @@ userscript ビルドでは vite.config.ts 内のカスタムプラグインが m
 
 データの流れ: `api/` でSmarky APIから取得 → `model/` で編集用構造体に変換 → `ui/` のフォームで編集 → `render/` でテキストをcanvasにPNG描画 → `save/` でZIP化してSmarkyへPOST → 保存後に再取得して反映を照合。
 
-- `src/ui/` — Shadow DOM 上のオーバーレイ全体。`overlay.ts`(ホスト生成・画面遷移・ヘッダのスロット)→ `sheetPicker.ts`(科目・回の一覧)→ `formView.ts`(1設問集中レイアウトの司令塔)。`formView.ts` が使う部品は `pageViewer.ts`(ページ画像 + 解答欄の枠オーバーレイ)・`fieldEditor.ts`(1設問ぶんの入力欄とプレビュー)・`questionStrip.ts`(下部の設問チップ)。CSSは `styles.ts` に文字列で集約
+- `src/ui/` — Shadow DOM 上のオーバーレイ全体。`overlay.ts`(ホスト生成・画面遷移・ヘッダのスロット)→ `sheetPicker.ts`(科目・回の一覧)→ `formView.ts`(1設問集中レイアウトの司令塔)。ヘッダの「設定」は `settingsView.ts`(端末共通の設定ダイアログ)。`formView.ts` が使う部品は `pageViewer.ts`(ページ画像 + 解答欄の枠オーバーレイ)・`fieldEditor.ts`(1設問ぶんの入力欄とプレビュー)・`questionStrip.ts`(下部の設問チップ)。CSSは `styles.ts` に文字列で集約
 - `src/api/` — `fetch`(credentials: include)による薄いクライアント。型は `types.ts`
 - `src/model/` — `field.ts`(編集可否の判定を含む `EditableField`)、`toParam.ts`(保存用パラメータ+ZIPエントリの構築)
 - `src/render/` — canvasでのテキスト計測・描画(横書き/縦書き)
@@ -77,7 +77,7 @@ userscript ビルドでは vite.config.ts 内のカスタムプラグインが m
 - `src/storage/` — localStorageへの入力内容自動バックアップ(キー: `easysmarky:{studentCode}:{baseSheetId}:{times}`、値は `{v:2, savedAt, fields}`。v0.5.0以前のフラットな形式も読める)と、一覧に出す進捗の要約(キー: `easysmarky:summary:{studentCode}`)。一覧APIは設問を返さないため、進捗と「手書きあり・保存不可」は一度開いた回の要約だけから出す。
 下書きの各設問には、読み込み時(直近の保存後)にサーバーが持っていた値を `base` として任意項目で足す(v:2 のまま。古い版が読んでも壊れない)。復元は `base` と違う(=この端末で触った)設問だけを戻し、戻した設問のうちサーバーの今の値が `base` と違うものは競合として知らせる。`base` の無い下書きは従来どおり全部戻す。復元した設問は元の `base` を引き継ぎ、他所で変わった設問は保存時に「上書きして保存」の確認を通すまで送らない(復元バナーは最初の編集で消えるため、保存の確認が持続する守り)。「元に戻す」は復元前の基準に戻す。
 同じ回を別のタブで書かれたら(`storage` イベント)、取り合いになるおそれを知らせる(中身はマージしない)。
-v0.11.0 で、次の端末側の保存を足した: 「続きから」用の最後に開いた回(キー: `easysmarky:last:{studentCode}`、`src/storage/listState.ts`)と、端末共通の表示設定(キー: `easysmarky:prefs`、`src/storage/prefs.ts`。`zoom` は手動で変えた倍率、`direction` は手動で選んだ書字方向)。`saveBackup` と `saveSheetSummary` は boolean を返し、失敗を呼び出し側が警告に使う。保存成功後に残ってよいキーは `tools/verify/harness.html` の `KEEP_AFTER_SAVE` に列挙する(新しい永続キーを足したら必ず足す)。
+v0.11.0 で、次の端末側の保存を足した: 「続きから」用の最後に開いた回(キー: `easysmarky:last:{studentCode}`、`src/storage/listState.ts`)と、端末共通の表示設定(キー: `easysmarky:prefs`、`src/storage/prefs.ts`。`zoom` は手動で変えた倍率、`direction` は手動で選んだ書字方向、`allowBinaryLoss` は手書き・画像のある回の保存の許可。変更は `onPrefsChange` で開いている画面に届く)。`saveBackup` と `saveSheetSummary` は boolean を返し、失敗を呼び出し側が警告に使う。保存成功後に残ってよいキーは `tools/verify/harness.html` の `KEEP_AFTER_SAVE` に列挙する(新しい永続キーを足したら必ず足す)。
 起動時に残っている下書きがある間の最初の入力で、古い下書きを `easysmarky:archive:{studentCode}:{baseSheetId}:{times}` へ退避してから、新しい入力を下書きに自動保存する(`offerPending`、`archiveBackupOnce`、`src/ui/formView.ts` と `src/storage/backup.ts`)。退避は保存成功か「破棄する」で消す。退避は一覧や画面からは出していない(この画面を開いている間の「復元する」だけが戻せる)。
 方向別の CSS は `src/ui/styles/{safety,list,mobile}.ts` を連結する(`OVERLAY_STYLES`)。キーボード追従は `src/ui/viewport.ts`(`--es-vvh` と `es-kbd`)。
 
@@ -89,7 +89,10 @@ v0.11.0 で、次の端末側の保存を足した: 「続きから」用の最�
 ## 安全上の不変条件(変更禁止)
 
 - **提出APIは呼ばない。** 自動化するのは下書き保存(`/api/student/digital_report/save`)まで
-- **手書き・画像の解答(`answer_images` / `base64_canvas`)が1つでも含まれるシートは保存自体をブロックする**(`model/toParam.ts` の `checkSaveGuard`)。GET APIが画像バイナリを再取得可能な形で返すか実機で未確認のため、データ消失防止の安全策
+- **手書き・画像の解答(`answer_images` / `base64_canvas`)が1つでも含まれるシートは、既定で保存をブロックする**(`model/toParam.ts` の `checkSaveGuard`)。GET APIが画像バイナリを再取得可能な形で返すか実機で未確認のため、データ消失防止の安全策。
+  - 例外は、利用者が**ヘッダの「設定」で明示的に許可したときだけ**(`prefs.allowBinaryLoss`、既定オフ)。設定の説明に「保存すると消えるおそれ・元に戻せない」を書く。フォームには警告欄も確認ダイアログも出さない。許可は端末共通(`easysmarky:prefs`)に残るので、共有端末では次の人にも効く。
+  - 同意のあとに、手書きが増えた(画像の id が新しい・canvas の中身が変わった)設問があれば送らない(`save/conflict.ts` の `binaryGrownFieldIds`。件数だけでは比べない)。手書きを含まない設問の変化は、従来どおり競合の判定に任せる。
+  - 送るのは開いた1回だけ。他の回・他の科目には触れない。保存後に手書きの件数(保存前 → 保存後)を出す
 - 複数テキストスタンプ(`answer_texts` が2件以上)の設問は主テキストの追加編集をしない(既存分はメタデータから再レンダリングして送り返すのみ)
 - 保存直前に再取得し、手書きが増えていれば送らない。読み込み後に他所で変わった設問を、送ると置き換えてしまうなら送らず、利用者に「上書きして保存」を確認付きで選ばせる(`save/save.ts`、`save/conflict.ts`)
-- 保存後は同条件で再取得し、送信したテキストが反映されているかを照合する(`save/save.ts`)
+- 保存後は同条件で再取得し、送信したテキストが反映されているかを照合する。手書き・画像の件数もこのとき数えて出す(`save/save.ts`)
