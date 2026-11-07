@@ -15,6 +15,11 @@
 <pre id="es-results">PENDING</pre>
 <div class="filler">背後のページ。オーバーレイ表示中はスクロールしないはず。</div>
 
+<!-- シナリオ設定(?scenario=dN で選ばれる)。各ファイルは window.__esScenarios.dN に登録するだけ -->
+<script src="harness-d1.js"></script>
+<script src="harness-d2.js"></script>
+<script src="harness-d3.js"></script>
+
 <script>
 // ============================================================
 // ダミーのページ画像
@@ -197,6 +202,21 @@ const REPORT = {
 };
 
 // ============================================================
+// シナリオ(?scenario=dN)。tools/verify/harness-dN.js が登録した設定を読む。
+// 指定が無いと SCN は空になり、従来の挙動と完全に同じ。担当は自分の dN の設定だけを書く。
+//   sheetList:        SHEET_LIST の代わりに返す一覧データ
+//   delayMs:          { list, digitalReport, save } 各 API 応答を遅らせるミリ秒
+//   skipWriteBackIds: 保存時に REPORT へ書き戻さない設問 id の配列(保存後照合の不一致を作る)
+//   seedStorage:      フォームを開く前に localStorage へ入れる { キー: 文字列 }
+// ============================================================
+const SCENARIO_NAME = new URLSearchParams(location.search).get("scenario");
+const SCN = (window.__esScenarios && SCENARIO_NAME && window.__esScenarios[SCENARIO_NAME]) || {};
+const scnDelay = (ms) => (ms ? new Promise((r) => setTimeout(r, ms)) : null);
+// 保存成功後に localStorage に残ってよいキー(下書きのバックアップ以外)。新しい永続キーを足したら書く
+// 退避(easysmarky:archive:)は、古い下書きを上書きから守るための別のキー。下書きの後始末とは別に残りうる
+const KEEP_AFTER_SAVE = [":summary:", "easysmarky:hint-", "easysmarky:last:", "easysmarky:prefs", "easysmarky:archive:"];
+
+// ============================================================
 // fetch スタブ(保存はステートフル: 保存された answer_texts を REPORT に書き戻す)
 // ============================================================
 const POST_LOG = [];
@@ -210,13 +230,17 @@ window.fetch = async (input, init) => {
     status: 200, headers: { "Content-Type": "application/json" },
   });
   if (url.startsWith("/api/current_user")) return json(CURRENT_USER);
-  if (url.startsWith("/api/student/student_sheet_list")) return json(SHEET_LIST);
+  if (url.startsWith("/api/student/student_sheet_list")) {
+    await scnDelay(SCN.delayMs?.list);
+    return json(SCN.sheetList || SHEET_LIST);
+  }
 
   if (url.startsWith("/api/student/digital_report/save")) {
     if (window.__esFail.saveNetwork) {
       window.__esFail.saveNetwork = false;
       throw new TypeError("Failed to fetch");
     }
+    await scnDelay(SCN.delayMs?.save);
     const form = init && init.body;
     const entry = { zipBytes: null, fieldCount: 0, texts: [], error: null };
     try {
@@ -229,7 +253,7 @@ window.fetch = async (input, init) => {
       // 実サーバと同じく、保存された内容が以後のGETに反映されるようにする
       for (const p of params) {
         const target = REPORT.base_sheet_fields.find((f) => f.id === p.id);
-        if (target) target.answer_texts = p.answer_texts || [];
+        if (target && !(SCN.skipWriteBackIds || []).includes(p.id)) target.answer_texts = p.answer_texts || [];
         entry.texts.push({ id: p.id, text: (p.answer_texts && p.answer_texts[0] && p.answer_texts[0].text) || "" });
       }
     } catch (e) {
@@ -244,6 +268,7 @@ window.fetch = async (input, init) => {
       window.__esFail.verifyOnce = false;
       throw new TypeError("Failed to fetch");
     }
+    await scnDelay(SCN.delayMs?.digitalReport);
     return json(REPORT);
   }
   return realFetch(input, init);
@@ -254,6 +279,8 @@ try {
   for (const key of Object.keys(localStorage)) {
     if (key.startsWith("easysmarky:")) localStorage.removeItem(key);
   }
+  // シナリオが指定した初期データは、消去のあと・オーバーレイを開く前に入れる
+  for (const [key, value] of Object.entries(SCN.seedStorage || {})) localStorage.setItem(key, value);
 } catch (e) { /* localStorage が使えない環境は無視 */ }
 
 // ============================================================
@@ -746,8 +773,9 @@ async function runAssertions() {
   // --- 保存成功でこの端末のバックアップが消える(summary は残ってよい) ---
   results.steps.backupAfterSave = {
     // 下書きのバックアップだけを数える(要約と初回ヒントの表示済みフラグは対象外)
+    // 残ってよいキーは許可リストで決める。新しい永続キーを足したらここに足す
     keys: Object.keys(localStorage).filter(
-      (k) => k.startsWith("easysmarky:") && !k.includes(":summary:") && !k.startsWith("easysmarky:hint-"),
+      (k) => k.startsWith("easysmarky:") && !KEEP_AFTER_SAVE.some((p) => k.includes(p)),
     ),
   };
 

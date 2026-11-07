@@ -2,6 +2,7 @@ import { AnswerType, Direction } from "../api/types";
 import { isEditableField, type EditableField } from "../model/field";
 import { layoutAnswerText } from "../render/answerLayout";
 import { measureText } from "../render/measure";
+import { updatePrefs } from "../storage/prefs";
 import { drawCropPreview, type CropRect } from "./cropPreview";
 
 export interface FieldEditorOptions {
@@ -46,6 +47,14 @@ export function fieldShortLabel(field: EditableField): string {
 export function fieldLabel(field: EditableField): string {
   const label = fieldShortLabel(field);
   return field.raw.allot != null ? `${label}(${field.raw.allot}点)` : label;
+}
+
+/** visualViewport(ソフトキーボードなど)の変化で fn を呼ぶ。解除関数を返す。対応しない環境では何もしない */
+function watchVisualViewport(fn: () => void): () => void {
+  const vv = window.visualViewport;
+  if (!vv) return () => {};
+  vv.addEventListener("resize", fn);
+  return () => vv.removeEventListener("resize", fn);
 }
 
 /** 改行を除いた文字数(サロゲートペアを1文字と数える) */
@@ -369,6 +378,8 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     window.setTimeout(updatePreview, 50);
     const choiceObserver = new ResizeObserver(() => updatePreview());
     choiceObserver.observe(previewSlot);
+    // キーボードの出し入れは幅を変えないので ResizeObserver では拾えない。プレビューの高さ上限を引き直す
+    const unwatchViewport = watchVisualViewport(() => updatePreview());
 
     const choiceHints = document.createElement("div");
     choiceHints.className = "es-key-hints";
@@ -385,7 +396,10 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       element: el,
       getField: () => field,
       focus: () => (buttons.get(field.text) ?? buttons.get(""))?.focus(),
-      destroy: () => choiceObserver.disconnect(),
+      destroy: () => {
+        choiceObserver.disconnect();
+        unwatchViewport();
+      },
     };
   }
 
@@ -429,6 +443,13 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   fitWarning.textContent =
     "このままでも保存できますが、解答用紙では文字が枠の外にはみ出して表示されます。文字数を減らすか、縦書きに変えるとおさまることがあります。";
   el.appendChild(fitWarning);
+
+  // スマホ向けの操作案内(PC では CSS で出さない)。ピンチと「読む」を知らせる
+  const touchHints = document.createElement("div");
+  touchHints.className = "es-touch-hints";
+  touchHints.textContent =
+    "解答用紙は2本指のピンチで拡大・縮小できます。「読む」で全画面表示にできます。";
+  el.appendChild(touchHints);
 
   const hints = document.createElement("div");
   hints.className = "es-key-hints";
@@ -478,14 +499,17 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   refreshFit();
 
   // 今の向きを押し直しただけなら変更ではない(未保存の表示や離脱の確認を誤って出さないため)
+  // 手動で選んだときだけ端末に覚える(答えの無い設問の既定値になる)。押し直しは覚えない
   horizBtn.addEventListener("click", () => {
     if (field.direction === Direction.Horizon) return;
     field.direction = Direction.Horizon;
+    updatePrefs({ direction: Direction.Horizon });
     onEdited();
   });
   vertBtn.addEventListener("click", () => {
     if (field.direction === Direction.Vertical) return;
     field.direction = Direction.Vertical;
+    updatePrefs({ direction: Direction.Vertical });
     onEdited();
   });
   textarea.addEventListener("input", () => {
@@ -504,11 +528,29 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   // スマホは入力ペインが display:none で始まるため、初回描画もこの経路に頼っている。
   const resizeObserver = new ResizeObserver(() => updatePreview());
   resizeObserver.observe(previewSlot);
+  // ソフトキーボードの出し入れでは幅が変わらないので、visualViewport の変化でプレビューを引き直す。
+  // 入力中の textarea がキーボードの下に隠れないよう、フォーカスが残っていれば見える位置へ寄せる
+  const unwatchViewport = watchVisualViewport(() => {
+    updatePreview();
+    if (isTextareaFocused()) textarea.scrollIntoView({ block: "nearest" });
+  });
+
+  function isTextareaFocused(): boolean {
+    const root = textarea.getRootNode() as ShadowRoot | Document;
+    return "activeElement" in root && root.activeElement === textarea;
+  }
 
   return {
     element: el,
     getField: () => field,
-    focus: () => textarea.focus(),
-    destroy: () => resizeObserver.disconnect(),
+    focus: () => {
+      textarea.focus();
+      // キーボードが出る前の位置合わせ(iOS では直後にずれるので、上の visualViewport の変化でも寄せ直す)
+      textarea.scrollIntoView({ block: "nearest" });
+    },
+    destroy: () => {
+      resizeObserver.disconnect();
+      unwatchViewport();
+    },
   };
 }

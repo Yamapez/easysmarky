@@ -63,18 +63,21 @@ export function loadBackup(studentCode: string, baseSheetId: number, times: numb
   }
 }
 
+/** 書けたら true。false なら呼び出し側がこの端末に残っていないことを利用者に伝える */
 export function saveBackup(
   studentCode: string,
   baseSheetId: number,
   times: number,
   data: SheetBackup,
   savedAt: number = Date.now(),
-): void {
+): boolean {
   try {
     const stored: StoredBackupV2 = { v: 2, savedAt, fields: data };
     localStorage.setItem(backupKey(studentCode, baseSheetId, times), JSON.stringify(stored));
+    return true;
   } catch {
-    // localStorageが使えない環境(プライベートモード等の容量制限)は無視する
+    // localStorageが使えない環境(プライベートモード・容量超過など)。黙って失敗させず false を返す
+    return false;
   }
 }
 
@@ -83,6 +86,34 @@ export function clearBackup(studentCode: string, baseSheetId: number, times: num
     localStorage.removeItem(backupKey(studentCode, baseSheetId, times));
   } catch {
     // 消せなくても実害は無い(復元バーが出なくなるだけ)
+  }
+}
+
+/** 復元の提示が残っている古い下書きを退避しておくキー。下書きとは別で、自動保存の対象にしない */
+function archiveKey(studentCode: string, baseSheetId: number, times: number): string {
+  return `easysmarky:archive:${studentCode}:${baseSheetId}:${times}`;
+}
+
+/**
+ * 上書きされる直前の下書きを退避する。退避先は、その時点の下書きで置き換える(画面に出ていた内容を残すため)。
+ * 退避できなければ false。呼び出し側は、退避できないうちは下書きを上書きしない。
+ */
+export function archiveBackup(studentCode: string, baseSheetId: number, times: number): boolean {
+  try {
+    const current = localStorage.getItem(backupKey(studentCode, baseSheetId, times));
+    if (current === null) return true; // 退避するものが無い
+    localStorage.setItem(archiveKey(studentCode, baseSheetId, times), current);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearArchive(studentCode: string, baseSheetId: number, times: number): void {
+  try {
+    localStorage.removeItem(archiveKey(studentCode, baseSheetId, times));
+  } catch {
+    // 消せなくても実害は無い
   }
 }
 
@@ -100,28 +131,40 @@ export function loadSheetSummaries(studentCode: string): SheetSummaries {
   }
 }
 
+/** 書けたら true。起動直後の書き込み可否の確認にも使う(下書きは書かずに済ませるため) */
 export function saveSheetSummary(
   studentCode: string,
   baseSheetId: number,
   times: number,
   summary: SheetSummary,
-): void {
+): boolean {
   try {
     const all = loadSheetSummaries(studentCode);
     all[sheetSummaryId(baseSheetId, times)] = summary;
     localStorage.setItem(summaryKey(studentCode), JSON.stringify(all));
+    return true;
   } catch {
-    // 進捗表示が出なくなるだけなので無視する
+    // 進捗表示が出なくなるだけ。呼び出し側は、書けなかったことを警告の判断材料にする
+    return false;
   }
 }
 
 export function debounce<Args extends unknown[]>(
   fn: (...args: Args) => void,
   waitMs: number,
-): (...args: Args) => void {
+): ((...args: Args) => void) & { cancel: () => void } {
   let timer: number | undefined;
-  return (...args: Args) => {
+  const run = (...args: Args) => {
     if (timer !== undefined) window.clearTimeout(timer);
-    timer = window.setTimeout(() => fn(...args), waitMs);
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      fn(...args);
+    }, waitMs);
   };
+  // 保留中の呼び出しを捨てる。保存が済んで下書きを消したあとに、古い内容で書き戻されないため
+  run.cancel = () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+    timer = undefined;
+  };
+  return run;
 }

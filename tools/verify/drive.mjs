@@ -712,6 +712,14 @@ try {
     await assertReaderWindowVertical(send, label, w);
   }
 
+  // シナリオ別の検査。各担当は tools/verify/checks/dN.mjs の run() に書く
+  // (設定は harness-dN.js の window.__esScenarios.dN、読み込みは ?scenario=dN)
+  const scenarioCtx = { send, evalJs, setViewport, openHarness, check, URL_HARNESS, sleep, screenshot };
+  for (const name of ["d1", "d2", "d3"]) {
+    const mod = await import(`./checks/${name}.mjs`);
+    await mod.run(scenarioCtx);
+  }
+
   // 目視確認用のスクリーンショット
   await setViewport(send, 1400, 900);
   await openHarness(send, URL_HARNESS);

@@ -1,10 +1,18 @@
-export const OVERLAY_STYLES = `
+import { SAFETY_CSS } from "./styles/safety";
+import { LIST_CSS } from "./styles/list";
+import { MOBILE_CSS } from "./styles/mobile";
+
+const BASE_CSS = `
 :host, * { box-sizing: border-box; }
 .es-root {
   position: fixed;
   inset: 0;
+  /* ソフトキーボード表示中は見える領域の上端・高さに合わせる(viewport.ts が --es-vv-top / --es-vvh を設定)。
+     無いときは従来どおり画面全体 */
+  top: var(--es-vv-top, 0px);
   height: 100vh;   /* dvh 未対応ブラウザ向けのフォールバック */
   height: 100dvh;  /* iOS Safari のツールバー分を除いた実際の表示高さ */
+  height: var(--es-vvh, 100dvh);
   z-index: 2147483000;
   background: #fff;
   color: #1d2b33;
@@ -259,6 +267,23 @@ export const OVERLAY_STYLES = `
   text-align: center;
   color: #666;
 }
+/* 読み込み中の回転表示。文字は残す(動きが止まっても何を待っているかは分かる)。
+   role="status" の読み込み表示だけに付ける(空の知らせ「見つかりませんでした」には出さない) */
+.es-loading[role="status"]::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  vertical-align: -4px;
+  border: 3px solid #cfe3ec;
+  border-top-color: #2196c9;
+  border-radius: 50%;
+  animation: es-spin .8s linear infinite;
+}
+@keyframes es-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ===== フォーム全体(1設問集中レイアウト) ===== */
 .es-form {
@@ -433,7 +458,7 @@ export const OVERLAY_STYLES = `
   display: block;
   max-width: 100%;
   height: auto;
-  max-height: 44vh; /* どのブレークポイントにも当たらない既定値(下の2つが上書きする) */
+  max-height: calc(var(--es-vvh, 100vh) * .44); /* どのブレークポイントにも当たらない既定値(下の2つが上書きする) */
 }
 .es-preview-overlay {
   position: absolute;
@@ -546,6 +571,14 @@ export const OVERLAY_STYLES = `
   outline: none;
   border-color: #2196c9;
   box-shadow: 0 0 0 3px rgba(33, 150, 201, .24);
+}
+/* スマホ専用の操作案内(既定は出さない。スマホ幅の分岐で .es-touch-hints を表示する) */
+.es-touch-hints {
+  display: none;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b777e;
 }
 .es-key-hints {
   display: none;
@@ -990,7 +1023,7 @@ button:focus-visible,
   .es-preview-slot { flex: 1 1 58%; min-width: 0; margin-bottom: 14px; }
   /* プレビューと入力欄を同時に視界に収め、スクロールしての見比べを減らす。
      この上限が当たるのは縦長の切り出しだけで、横長は先に幅で頭打ちになる */
-  .es-preview-wrap canvas.es-crop { max-height: 36vh; }
+  .es-preview-wrap canvas.es-crop { max-height: calc(var(--es-vvh, 100vh) * .36); }
   .es-question-preview {
     display: block;
     flex: 1 1 30%;
@@ -1003,7 +1036,7 @@ button:focus-visible,
   /* 問題文(解答用紙に印字された設問文)を常時表示するための領域。
      可変にすると入力内容量でガタつくので固定高さにする */
   .es-pane-question {
-    flex: 0 0 36vh;
+    flex: 0 0 calc(var(--es-vvh, 100vh) * .36);
     min-height: 170px;
     border-bottom: 1px solid #ddd;
   }
@@ -1012,7 +1045,15 @@ button:focus-visible,
     min-height: 0; /* editorBody の内部スクロールを効かせるために必須 */
   }
   /* 下書き復元バー等が常時表示のquestionPaneと競合して編集領域を圧迫しすぎないよう縮める */
-  .es-notices { max-height: 22vh; }
+  .es-notices { max-height: calc(var(--es-vvh, 100vh) * .22); }
+  /* キーボード表示中(es-kbd)は、見える領域が狭いぶん問題ペインと注意書きをさらに縮め、入力欄を残す */
+  .es-root.es-kbd .es-pane-question {
+    flex: 0 0 calc(var(--es-vvh, 100vh) * .2);
+    min-height: 96px;
+  }
+  .es-root.es-kbd .es-notices { max-height: calc(var(--es-vvh, 100vh) * .12); }
+  /* スマホだけ、テキスト入力の下に操作案内を常時出す(PC は下の .es-key-hints が担当) */
+  .es-touch-hints { display: block; }
   /* 凡例は解答用紙ペインに浮いて本文に重なる。狭い画面では枠のラベルが
      「— 入力中」「— 未入力」「— 編集不可」と状態を文字で書いているので出さない
      (ツールバーへ移すと flex-wrap で2行目に折り返し、36vh しかないペインを
@@ -1027,7 +1068,7 @@ button:focus-visible,
      textareaの領域を残すため上限は控えめにする。ただし1文字の縦書き解答欄
      (縦横比 0.7 前後)が読める大きさは要る。この上限が当たるのは縦長の
      切り出しだけで、横長(実機の大多数)は先に幅で頭打ちになるため縦の予算は増えない */
-  .es-preview-wrap canvas.es-crop { max-height: min(200px, 26vh); }
+  .es-preview-wrap canvas.es-crop { max-height: min(200px, calc(var(--es-vvh, 100vh) * .26)); }
   .es-editor-nav.pc-only { display: none; }
   .es-editor-head .es-editor-name { display: none; }
   .es-progress-count, .es-autosave { display: none; }
@@ -1038,4 +1079,14 @@ button:focus-visible,
   .es-editor-body { padding: 10px 12px; }
   .es-savebar { padding: 8px 12px 12px; }
 }
+
+/* 動きを減らす設定の利用者には、回転・点滅・フェードを止める(情報は文字と枠の色で残る) */
+@media (prefers-reduced-motion: reduce) {
+  .es-loading[role="status"]::before { animation: none; }
+  .es-rim.active { animation: none; }
+  .es-toast { transition: none; }
+}
 `;
+
+// 方向別の CSS は末尾に連結する。各担当は自分のファイル(styles/*.ts)にだけ追記する
+export const OVERLAY_STYLES = BASE_CSS + SAFETY_CSS + LIST_CSS + MOBILE_CSS;
