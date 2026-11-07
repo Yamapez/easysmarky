@@ -1,5 +1,5 @@
 // 方向3(スマホの入力体験)の検査。
-// 使い方: await openHarness(send, `${URL_HARNESS}?scenario=d3`) で開き、evalJs で状態を読み、check(名前, 条件, 詳細) を呼ぶ。
+// 使い方: await open(`${URL_HARNESS}?scenario=d3`) で開き(open は about:blank を挟んで openHarness を呼ぶ)、evalJs で状態を読み、check(名前, 条件, 詳細) を呼ぶ。
 // 設定(擬似 visualViewport・遅延・記憶した倍率)は URL で切り替える。仕様は tools/verify/harness-d3.js を参照。
 
 const SH = `document.getElementById("easysmarky-host").shadowRoot`;
@@ -65,6 +65,12 @@ const ROOT_VARS = `(() => {
 export async function run(ctx) {
   const { send, evalJs, setViewport, openHarness, check, URL_HARNESS, screenshot } = ctx;
   const d3 = (query = "") => `${URL_HARNESS}?scenario=d3${query}`;
+  // 遷移の直前のページ(フォームが開いたまま等)の DOM を openHarness が拾わないよう、いったん白紙に戻してから開く
+  const open = async (url) => {
+    await send("Page.navigate", { url: "about:blank" });
+    await sleepLocal(150);
+    await openHarness(send, url);
+  };
   const prefsZoom = `(() => {
     try { const p = JSON.parse(localStorage.getItem("easysmarky:prefs")); return p ? p.zoom : null; }
     catch (e) { return "error"; }
@@ -72,7 +78,7 @@ export async function run(ctx) {
 
   // ---------------------------------------------------------------- 1. キーボード(擬似 visualViewport)
   await setViewport(send, 430, 900);
-  await openHarness(send, d3());
+  await open(d3());
   await evalJs(send, OPEN_SHEET);
 
   const kb0 = await evalJs(send, ROOT_VARS);
@@ -197,6 +203,25 @@ export async function run(ctx) {
   check("d3: ピンチ後しばらくすると、1本指のタップで枠が選べる",
     activeAfterTap === 2, { activeAfterTap, tapPoint });
 
+  // 2本指を動かさずに、枠の上(枠1)と枠の外に同時に置いて離す。ピンチではないが、枠の click を拾わないこと
+  await evalJs(send, `(() => { ${SH}.activeElement?.blur(); return true; })()`);
+  const onRim = await evalJs(send, rimCenterInView(1));
+  const offRim = await evalJs(send, `(() => {
+    const r = ${SH}.querySelector(".es-viewer-scroll").getBoundingClientRect();
+    return { x: r.right - 14, y: r.bottom - 14 };
+  })()`);
+  await touch("touchStart", [
+    { x: onRim.x, y: onRim.y, id: 0 },
+    { x: offRim.x, y: offRim.y, id: 1 },
+  ]);
+  await sleepLocal(60);
+  await touch("touchEnd", []);
+  await sleepLocal(450);
+  const activeAfterStill = await evalJs(send, ACTIVE_FIELD);
+  const taAfterStill = await evalJs(send, `(() => ${SH}.activeElement?.tagName === "TEXTAREA")()`);
+  check("d3: 2本指を動かさずに枠の上で離しても、枠は選ばれず入力欄にも入らない",
+    activeAfterStill === 2 && taAfterStill === false, { activeAfterStill, taAfterStill, onRim, offRim });
+
   // ---------------------------------------------------------------- 3. ズームの記憶(次回の初期値・自動ズーム)
   // 一覧へ戻って開き直す(同じ画面内で記憶が読み直されること)。この時点の倍率は記憶した値になっているはず
   await evalJs(send, `(() => { ${SH}.querySelector(".es-header-back")?.click(); return true; })()`);
@@ -211,7 +236,7 @@ export async function run(ctx) {
   await send("Emulation.setTouchEmulationEnabled", { enabled: false, maxTouchPoints: 1 });
 
   // 記憶の上で自動ズームが止まらないこと: 倍率 1.5 を記憶して開き、小さい解答欄(オ)を選ぶと 1.5 を超えて拡大する
-  await openHarness(send, d3("&zoom=1.5"));
+  await open(d3("&zoom=1.5"));
   await evalJs(send, OPEN_SHEET);
   const zoomMemWide = await evalJs(send, ZOOM_NOW);
   check("d3: 記憶した 150% で開く(先頭は横長の解答欄なので自動ズームは 150% のまま)",
@@ -234,9 +259,15 @@ export async function run(ctx) {
   const savedAfterFit = await evalJs(send, prefsZoom);
   check("d3: 「全体」で倍率が 100% に戻り、記憶も消える",
     zoomFit === 1 && savedAfterFit === null, { zoomFit, savedAfterFit });
+  // 「全体」の直後だけでなく、同じ画面で設問を移ったあとも下限が残っていないこと(横長の設問は自動では 100%)
+  await evalJs(send, `(() => { ${SH}.querySelector('.es-strip-chip[data-field-id="3"]')?.click(); return true; })()`);
+  await sleepLocal(700);
+  const zoomAfterFitNav = await evalJs(send, ZOOM_NOW);
+  check("d3: 「全体」のあとは、設問を移っても記憶の下限が残らず 100% のまま",
+    zoomAfterFitNav === 1, zoomAfterFitNav);
 
   // ---------------------------------------------------------------- 4. 読み込み表示(スピナーと reduced-motion)
-  await openHarness(send, d3("&delay=900"));
+  await open(d3("&delay=900"));
   // 一覧の応答を待ったあと、報告の取得を遅らせた状態で設問を開く
   await evalJs(send, `(async () => {
     const sh = ${SH};
@@ -281,7 +312,7 @@ export async function run(ctx) {
   check("d3: 読み込みが終わるとスピナーの表示は消える", spinnerGone === true, spinnerGone);
 
   // ---------------------------------------------------------------- 5. 実機の visualViewport(擬似なし)
-  await openHarness(send, d3("&real=1"));
+  await open(d3("&real=1"));
   await evalJs(send, OPEN_SHEET);
   const real = await evalJs(send, `(() => {
     const vv = window.visualViewport;

@@ -119,7 +119,7 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   /** ズーム倍率。1 = ペイン幅にフィット。設問を切り替えても保持する(手動で拡大した状態を壊さない) */
   let zoomScale = opts.initialZoom ?? remembered ?? 1;
   /** 自動ズームの下限。記憶した倍率が無ければ 1(従来どおり) */
-  const zoomFloor = remembered ?? 1;
+  let zoomFloor = remembered ?? 1;
   /** ＋/−/ピンチで手動に変えたら true。「全体」を押すまで、設問へのジャンプで自動ズームしない */
   let userZoomed = opts.initialZoom != null;
   let activeFieldId: number | null = null;
@@ -542,7 +542,8 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   zoomFitBtn.addEventListener("click", () => {
     zoomScale = 1;
     userZoomed = false;
-    // 「全体」は記憶も消す(次回から従来どおりの自動ズームに戻る)
+    // 「全体」は記憶も消す(次回から従来どおりの自動ズームに戻る)。下限もこの画面の中で 1 に戻す
+    zoomFloor = 1;
     rememberZoom(null);
     scroll.scrollTo(0, 0);
     render();
@@ -645,7 +646,12 @@ export function createPageViewer(opts: PageViewerOptions): PageViewerHandle {
   }
 
   scroll.addEventListener("pointerdown", (event: PointerEvent) => {
-    // 前の操作の取り残し(離した通知が来なかった指)を捨て、今の指だけで数え直す
+    // 離した通知が来なかった指が残っていると、次の1本指が2本指扱いになり、枠の抑止が解けなくなる。
+    // 新しい1本目(primary)が来たときは、残っている指を捨てて数え直す
+    if (event.isPrimary && pointers.size > 0) {
+      pointers.clear();
+      if (pinch) finishPinch();
+    }
     if (pointers.size === 0 && suppressTimer == null) suppressClicks = false;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.size === 2) startPinch();
