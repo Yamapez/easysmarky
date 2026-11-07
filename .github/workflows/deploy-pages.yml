@@ -54,6 +54,14 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install Japanese fonts
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          # 診断: 日本語の文字に使われるフォントをログに残す(失敗したとき原因の切り分けに使う)
+          fc-match "serif:lang=ja"
+
       - name: Setup Chrome
         if: steps.gate.outputs.skip != 'true'
         id: setup-chrome
