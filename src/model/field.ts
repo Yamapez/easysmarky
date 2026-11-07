@@ -4,9 +4,9 @@ import { loadPrefs } from "../storage/prefs";
 
 export interface EditableField {
   raw: BaseSheetField;
-  /** kind===0(通常設問) かつ answer_type===Text の、easysmarkyでテキスト編集可能な設問か */
+  /** kind===0(通常設問) かつ answer_type が Both(手書き・テキスト)/Text(テキストのみ) の、テキスト編集可能な設問か */
   isEditableText: boolean;
-  /** kind===0 かつ answer_type===Choice(記号などの選択式)。選択肢が1つ以上あれば編集できる */
+  /** kind===0 かつ answer_type===Choice(4・記号などの選択式)。選択肢が1つ以上あれば編集できる */
   isEditableChoice: boolean;
   /** 選択肢の一覧(normalizeChoices で正規化済み。選択式でなければ空) */
   choices: string[];
@@ -38,17 +38,22 @@ export function isEditableField(field: EditableField): boolean {
   return (field.isEditableText || field.isEditableChoice) && !field.hasExtraStamps;
 }
 
+/** テキストを打てる answer_type か(手書き・テキスト、またはテキストのみ) */
+function isTextAnswerType(t: BaseSheetField["answer_type"]): boolean {
+  return t === AnswerType.Both || t === AnswerType.Text;
+}
+
 export function createEditableField(raw: BaseSheetField): EditableField {
   const texts = raw.answer_texts ?? [];
   const primary = firstAnswerText(texts);
   const defaults = defaultAnswerTextValues();
   const choices = normalizeChoices(raw.choice_texts);
   // 答えの無いテキスト設問だけ、手動で選んだ書字方向を既定値にする(選択式は向きを持たない)
-  const remembered = raw.answer_type === AnswerType.Text ? loadPrefs().direction : null;
+  const remembered = isTextAnswerType(raw.answer_type) ? loadPrefs().direction : null;
 
   return {
     raw,
-    isEditableText: raw.kind === 0 && raw.answer_type === AnswerType.Text,
+    isEditableText: raw.kind === 0 && isTextAnswerType(raw.answer_type),
     isEditableChoice: raw.kind === 0 && raw.answer_type === AnswerType.Choice && choices.length > 0,
     choices,
     choiceEdited: false,

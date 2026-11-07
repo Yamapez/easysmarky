@@ -155,9 +155,10 @@ function assertAll(label, r, viewportWidth) {
   const isMobile = viewportWidth < 900;
 
   // --- 1設問集中レイアウトの骨格 ---
-  // 設問は ア・イ・エ(編集不可)・ウ・オ・カ の6件(page→id順。エは画像型で編集不可、
-  // オは縦長の解答欄、カは記号問題(選択式)。ア・オ・カ は最初から入力済み)
-  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 6, s.initial.stripChips);
+  // 設問は ア・イ・エ(編集不可)・ウ・オ・カ・キ(編集不可) の7件(page→id順。エは画像型で編集不可、
+  // ウはテキストのみで編集可、オは縦長の解答欄、カは記号問題(選択式)、キは手書きのみで編集不可。
+  // ア・オ・カ は最初から入力済み)
+  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 7, s.initial.stripChips);
   check(`${label}: 最初の設問が開いている`, s.initial.editorName.includes("問1"), s.initial.editorName);
   check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 3/5", s.initial.progress);
 
@@ -225,12 +226,19 @@ function assertAll(label, r, viewportWidth) {
   // --- 別ページの設問を選ぶと、その枠が見える位置まで自動でパンする ---
   check(`${label}: 設問を選ぶとその枠が視界に入るまで自動でパンする`,
     s.autoPan.pagerLabel === "2 / 2" && s.autoPan.rimVisible === true, s.autoPan);
+  // テキストのみ(answer_type:3)のウは編集できる(以前は画像型扱いで編集不可になっていた)
+  check(`${label}: テキストのみ(answer_type:3)の設問は編集できる`,
+    s.autoPan.editable === true, s.autoPan);
 
   // --- Ctrl+↵ は編集不可の設問を飛ばす ---
   check(`${label}: Ctrl+↵ は編集不可の設問(エ)を飛ばす`,
     s.skipLocked.before.includes("イ") && s.skipLocked.after.includes("ウ") &&
     s.skipLocked.after !== s.skipLocked.before,
     s.skipLocked);
+  // 手書きのみ(answer_type:2)のキは、手書きのみの理由で編集不可になる
+  check(`${label}: 手書きのみの設問は理由を出して編集不可になる`,
+    s.drawLocked.editorName.includes("キ") && s.drawLocked.note.includes("手書きのみ"),
+    s.drawLocked);
 
   // --- 設問の移動 ---
   check(`${label}: ストリップで設問を移動できる`,
@@ -260,10 +268,10 @@ function assertAll(label, r, viewportWidth) {
     s.stripNav.field3Crop);
   check(`${label}: 用紙端でも解答欄が切り出しに収まる`,
     s.stripNav.field3CenterPixel === "#e3e9ff", s.stripNav.field3CenterPixel);
-  // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる(ウ・オ・カの3件)。
+  // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる(ウ・オ・カ・キの4件)。
   // rim[0,800,760,120] → left 0% / top 71.4285…% / width 95% / height 10.714…%
   check(`${label}: 設問を選ぶとその設問のページへ送られる`,
-    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 3,
+    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 4,
     { pager: s.stripNav.pagerLabel, rims: s.stripNav.rimCount });
   check(`${label}: 枠がページごとの用紙サイズで置かれる`,
     s.stripNav.firstRimStyle?.left === "0%" && s.stripNav.firstRimStyle?.width === "95%",

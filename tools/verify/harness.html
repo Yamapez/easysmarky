@@ -51,14 +51,14 @@ const QUESTION_PAGES = [
 const RIMS = [
   { id: 1, page: 1, part3: "ア", rim: [40, 400, 920, 120], fill: "#ffe3e3" },
   { id: 2, page: 1, part3: "イ", rim: [40, 600, 920, 120], fill: "#e3ffe8" },
-  // 画像型(answer_type:3)の編集不可設問。幅300/1000のように小さめにして、
+  // 画像型(answer_type:5)の編集不可設問。幅300/1000のように小さめにして、
   // 設問へジャンプしたときの自動ズームも一緒に検証できるようにする。
   // (選択式は選択肢があれば編集できるので、ここは画像型にしている)
-  { id: 4, page: 1, part3: "エ", rim: [40, 780, 300, 100], fill: "#f2e3ff", locked: true },
+  { id: 4, page: 1, part3: "エ", rim: [40, 780, 300, 100], fill: "#f2e3ff", type: 5 },
   // 2ページ目(用紙サイズも解像度も1ページ目と違う)の、用紙左端に接する解答欄。
   // cut_margin ぶんが用紙の外へ出るので、切り出しのクランプ(src/ui/cropPreview.ts)も
-  // ここで見る。
-  { id: 3, page: 2, part3: "ウ", rim: [0, 800, 760, 120], fill: "#e3e9ff" },
+  // ここで見る。テキストのみ(answer_type:3)なので編集できる。
+  { id: 3, page: 2, part3: "ウ", rim: [0, 800, 760, 120], fill: "#e3e9ff", type: 3 },
   // 縦長の解答欄(実機の「1文字だけ書く縦書きの解答欄」に相当)。
   // これが無いと canvas の max-height 上限が当たる経路を一度も通らず、
   // 「幅だけ指定して height:auto に任せる」= 高さだけ潰れて横に伸びる不具合
@@ -66,10 +66,13 @@ const RIMS = [
   // 用紙 800x1120・余白36 → 切り出し 172x332 → 画像ピクセル(1.25倍)で 215x415。
   // 1ページ目に置くと設問ストリップの添字がずれて既存の検査を巻き込むので2ページ目。
   { id: 5, page: 2, part3: "オ", rim: [620, 300, 100, 260], fill: "#ffefc2" },
-  // 記号問題(answer_type:2・選択式)。選択肢は配列で返し、既存の答えは「ウ」(answer_texts[0] が既にある形)。
+  // 記号問題(answer_type:4・選択式)。選択肢は配列で返し、既存の答えは「ウ」(answer_texts[0] が既にある形)。
   // 2ページ目の末尾に置くので、1ページ目の検査(設問ア・イ・エ)や「次の未入力」の連鎖は変わらない。
   // 設問の並びは page→id 順なので、オ の後ろに来る。
-  { id: 6, page: 2, part3: "カ", rim: [40, 480, 500, 100], fill: "#e6fff9", choices: ["ア", "イ", "ウ", "エ"], existing: "ウ" },
+  { id: 6, page: 2, part3: "カ", rim: [40, 480, 500, 100], fill: "#e6fff9", type: 4, choices: ["ア", "イ", "ウ", "エ"], existing: "ウ" },
+  // 手書きのみ(answer_type:2)の編集不可設問。末尾に置き、ア〜カの件数や連鎖に影響させない。
+  // 編集不可カードは「手書きのみ」の理由を出す(drive.mjs で見る)。
+  { id: 7, page: 2, part3: "キ", rim: [40, 960, 500, 100], fill: "#fff0e6", type: 2 },
 ];
 
 function makePage(text, lines, bg, page, rims) {
@@ -191,7 +194,7 @@ const REPORT = {
             : r.id === 5 ? [EXISTING_TALL_TEXT]
             : r.id === 6 ? [EXISTING_CHOICE_TEXT]
             : [],
-          r.choices ? 2 : r.locked ? 3 : 1,
+          r.type ?? 1,
           r.choices)),
   base64_question_images: [QUESTION_PAGE_1, QUESTION_PAGE_2],
   base64_answer_images: [ANSWER_PAGE_1, ANSWER_PAGE_2],
@@ -530,6 +533,16 @@ async function runAssertions() {
     editorName: (q(".es-editor-name").textContent || "").trim(),
     pagerLabel: (q(".es-viewer-count").textContent || "").trim(),
     rimVisible: rimVisibleInScroll(),
+    // 編集欄(textarea)が実際に描画されていることも確かめる。施錠カードが無いだけでは true にしない
+    editable: !q(".es-field-locked") && !!q("textarea.es-textarea"),
+  };
+
+  // --- 手書きのみ(answer_type:2)の設問は、その理由を出して編集不可にする ---
+  qa(".es-strip-chip")[6].click(); // キ(2ページ目の末尾・手書きのみ)
+  await sleep(400);
+  results.steps.drawLocked = {
+    editorName: (q(".es-editor-name").textContent || "").trim(),
+    note: (q(".es-field-locked-note")?.textContent || "").trim(),
   };
 
   // --- Ctrl+↵ は編集不可の設問(エ)を飛ばす ---

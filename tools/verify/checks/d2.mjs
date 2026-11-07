@@ -172,6 +172,27 @@ export async function run(ctx) {
   check("続きから: 保存値が壊れていても一覧は出て、続きからは出ない",
     (await ev(`!!${q(".es-list-item")}`)) && !(await ev(`!!${q(".es-resume")}`)), null);
 
+  // --- 進捗: 集計規則の版が古い要約(rules なし)は一覧に出さない。版が合えば出る ---
+  // 旧版の要約「1/1」が残っていると、記号問題の未回答でも完了に見えてしまうため。
+  const seedSummary = (entry) => ev(`(() => {
+    const last = Object.keys(localStorage).find((k) => k.startsWith("easysmarky:last:"));
+    if (!last) throw new Error("seedSummary: easysmarky:last: が無い(前段の続きからの検査が必要)");
+    const code = last.slice("easysmarky:last:".length);
+    localStorage.setItem("easysmarky:summary:" + code, JSON.stringify({ "1001:1": ${JSON.stringify(entry)} }));
+    return true;
+  })()`);
+  const progress1001 = () => ev(`${q('.es-list-item[data-base-sheet-id="1001"] .es-list-progress')}?.textContent ?? null`);
+  const summary = { total: 1, filled: 1, blocked: false, savedAt: 0 };
+  await seedSummary(summary); // 版なし(旧版で書かれた要約)
+  await refreshList();
+  const oldProgress = await progress1001();
+  await seedSummary({ ...summary, rules: 2 }); // 現在の版
+  await refreshList();
+  const currentProgress = await progress1001();
+  check("進捗: 集計規則の版が古い要約は一覧に出さず「—」にする(完了に見えない)",
+    oldProgress === "—" && currentProgress === "1/1",
+    { oldProgress, currentProgress });
+
   // --- 更新: 取り直した内容を反映する(提出済みになった 1001 は強調が消え、後ろへ回る) ---
   await ev(`(() => {
     const L = JSON.parse(JSON.stringify(window.__esScenarios.d2.sheetList));
