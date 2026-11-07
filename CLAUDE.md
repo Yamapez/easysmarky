@@ -68,7 +68,9 @@ userscript ビルドでは vite.config.ts 内のカスタムプラグインが m
 - `src/model/` — `field.ts`(編集可否の判定を含む `EditableField`)、`toParam.ts`(保存用パラメータ+ZIPエントリの構築)
 - `src/render/` — canvasでのテキスト計測・描画(横書き/縦書き)
 - `src/save/` — `buildZip.ts`(fflateで無圧縮ZIP生成)、`save.ts`(保存ガード→ZIP→POST→再取得照合のオーケストレーション)
-- `src/storage/` — localStorageへの入力内容自動バックアップ(キー: `easysmarky:{studentCode}:{baseSheetId}:{times}`、値は `{v:2, savedAt, fields}`。v0.5.0以前のフラットな形式も読める)と、一覧に出す進捗の要約(キー: `easysmarky:summary:{studentCode}`)。一覧APIは設問を返さないため、進捗と「手書きあり・保存不可」は一度開いた回の要約だけから出す
+- `src/storage/` — localStorageへの入力内容自動バックアップ(キー: `easysmarky:{studentCode}:{baseSheetId}:{times}`、値は `{v:2, savedAt, fields}`。v0.5.0以前のフラットな形式も読める)と、一覧に出す進捗の要約(キー: `easysmarky:summary:{studentCode}`)。一覧APIは設問を返さないため、進捗と「手書きあり・保存不可」は一度開いた回の要約だけから出す。
+v0.11.0 で、次の端末側の保存を足した: 「続きから」用の最後に開いた回(キー: `easysmarky:last:{studentCode}`、`src/storage/listState.ts`)と、端末共通の表示設定(キー: `easysmarky:prefs`、`src/storage/prefs.ts`。`zoom` は手動で変えた倍率、`direction` は手動で選んだ書字方向)。`saveBackup` と `saveSheetSummary` は boolean を返し、失敗を呼び出し側が警告に使う。保存成功後に残ってよいキーは `tools/verify/harness.html` の `KEEP_AFTER_SAVE` に列挙する(新しい永続キーを足したら必ず足す)。
+方向別の CSS は `src/ui/styles/{safety,list,mobile}.ts` を連結する(`OVERLAY_STYLES`)。キーボード追従は `src/ui/viewport.ts`(`--es-vvh` と `es-kbd`)。
 
 ### Smarky公式 app.js との対応
 
