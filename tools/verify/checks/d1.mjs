@@ -210,6 +210,45 @@ export async function run(ctx) {
     !(await text(".es-autosave")).includes("自動保存できません"),
     { stored: afterDiscardTyped, autosave: await text(".es-autosave") });
 
+  // 復元の提示に答えるまでは、打っても古い下書きを上書きしない(提示と自動保存の停止を示す)
+  await openHarness(send, `${URL_HARNESS}?scenario=d1restore`);
+  await openSheet();
+  await sleep(300);
+  const seededDraft = await storedDraft();
+  await setText("提示中に打った文");
+  await sleep(1200); // 500ms の自動保存の遅延を十分に過ぎてから読む
+  const pendingDraft = await storedDraft();
+  check("D1 復元の提示に答えるまで、打っても古い下書きは上書きされない",
+    pendingDraft === seededDraft, { seededDraft, pendingDraft });
+  const pendingStatus = await text(".es-autosave");
+  check("D1 提示が残り、ヘッダに自動保存を止めていることを出す",
+    (await hasButton("復元する")) && pendingStatus.includes("自動保存を止めています"), pendingStatus);
+
+  await stubConfirm(false);
+  await ev(`${sel(".es-header-back")}.click(), true`);
+  await sleep(150);
+  const leavePending = await lastConfirm();
+  check("D1 提示に答えていない間の離脱は、今の入力が自動保存されていないと言う",
+    leavePending.includes("自動保存されていません") && !leavePending.includes("自動保存されていますが"), leavePending);
+
+  // 保存が成功しても、提示に答えていない間は古い下書きと提示を消さない
+  await clickSave();
+  await until(`${sel(".es-save-status")}.textContent.includes("保存済み")`, 8000);
+  await sleep(300);
+  const afterSaveDraft = await storedDraft();
+  check("D1 提示に答えないまま保存しても、古い下書きと提示は残る",
+    afterSaveDraft === seededDraft && (await hasButton("復元する")), { afterSaveDraft: afterSaveDraft !== seededDraft });
+
+  // 「復元する」に答えたあとは、自動保存が再開する
+  await clickButton("復元する");
+  await sleep(300);
+  await setText("復元のあとに打った文");
+  await sleep(1200);
+  const resumedDraft = await storedDraft();
+  check("D1 復元に答えたあとは、入力がこの端末の下書きに自動保存される",
+    resumedDraft !== null && JSON.parse(resumedDraft).fields["1"].text === "復元のあとに打った文",
+    resumedDraft);
+
   // ================================================================ D. 保存後照合の不一致が3件
   await openHarness(send, `${URL_HARNESS}?scenario=d1mismatch`);
   await openSheet();

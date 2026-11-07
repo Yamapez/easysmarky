@@ -104,9 +104,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   opts.header.setLeaveGuard(() => {
     if (!dirty) return true;
     // 自動保存に失敗しているときは「この端末に残っている」とは言わない(言うと、離れても失われないと誤解させる)
-    const message = backupFailed
-      ? "保存されていない変更があります。\nこの端末への自動保存にも失敗しているため、離れると入力内容が失われるおそれがあります。\nSmarkyにはまだ反映されていません。\nこの画面を離れますか?"
-      : "保存されていない変更があります。\nこの端末には自動保存されていますが、Smarkyにはまだ反映されていません。\nこの画面を離れますか?";
+    let message = "保存されていない変更があります。\nこの端末には自動保存されていますが、Smarkyにはまだ反映されていません。\nこの画面を離れますか?";
+    if (backupFailed) {
+      message = "保存されていない変更があります。\nこの端末への自動保存にも失敗しているため、離れると入力内容が失われるおそれがあります。\nSmarkyにはまだ反映されていません。\nこの画面を離れますか?";
+    } else if (offerPending) {
+      // 復元の選択がまだなので、今の入力は自動保存されていない(古い下書きを守るため書いていない)
+      message = "保存されていない変更があります。\n復元の選択がまだのため、今の入力はこの端末に自動保存されていません。\nSmarkyにはまだ反映されていません。\nこの画面を離れますか?";
+    }
     return window.confirm(message);
   });
   opts.header.setTitle(
@@ -436,6 +440,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   /** この端末に自動保存できていないか。true の間は警告を出し、離脱の確認もそう言う */
   let backupFailed = false;
+  /** 復元の選択肢に答えるまで true。true の間は古い下書きを上書きしないよう、下書きを書かない */
+  let offerPending = false;
 
   function persistSummary(savedAt: number): boolean {
     return saveSheetSummary(sheet.studentCode, sheet.baseSheetId, sheet.times, {
@@ -449,6 +455,12 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   /** 今の入力をこの端末に書く。すぐ書きたいとき(破棄の直後など)はこれを直接呼ぶ */
   function persistNow(): void {
     const at = Date.now();
+    if (offerPending) {
+      // 復元の提示に答えるまでは下書きを書かない。要約だけは更新して一覧の進捗を保つ
+      persistSummary(at);
+      refreshStatusText();
+      return;
+    }
     const ok = saveBackup(sheet.studentCode, sheet.baseSheetId, sheet.times, collectBackup(), at);
     persistSummary(at);
     backupFailed = !ok;
@@ -524,6 +536,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       return;
     }
     autosaveEl.classList.remove("failed");
+    if (offerPending) {
+      autosaveEl.textContent = "復元の選択まで自動保存を止めています";
+      return;
+    }
     autosaveEl.textContent = lastSavedAt ? `この端末に自動保存 ${formatTime(lastSavedAt)}` : "";
   }
 
@@ -664,6 +680,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     restoreBarEl?.remove();
     restoreBarEl = null;
     undoSeq = null;
+    // 提示に答えた(復元・破棄・元に戻す前の取り外し)ら、自動保存を再開する
+    offerPending = false;
+    refreshStatusText();
   }
 
   /**
@@ -699,6 +718,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       ? `この端末に、${formatDateTime(backup.savedAt)} に入力した下書きが残っています。`
       : "この端末に保存された下書きが残っています。";
     bar.appendChild(message);
+    const note = document.createElement("div");
+    note.textContent = "復元するか破棄するまで、新しい入力はこの端末に自動保存されません。";
+    bar.appendChild(note);
     const actions = document.createElement("div");
     actions.className = "es-warning-actions";
     const restoreBtn = document.createElement("button");
@@ -722,11 +744,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       if (!window.confirm("この端末に保存された下書きを破棄します。\n破棄すると元に戻せません。よろしいですか?")) return;
       clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
       removeRestoreBar();
-      // 復元の前に打った分は、自動保存が古い下書きの代わりに書いている。それも消えているので、今の入力を書き直す
+      // 提示が出ている間は下書きを書いていない。消したあと、今の入力をここで書く
       if (dirty) persistNow();
     });
     notices.appendChild(bar);
     restoreBarEl = bar;
+    offerPending = true;
+    refreshStatusText();
   }
 
   function showRestoredBanner(backup: LoadedBackup, before: SheetBackup): void {
@@ -858,9 +882,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         // 入力はこの端末に残っている。失敗の理由と、次に何をすればよいかを併せて示す
         let message = result.blockedReason ?? (result.errors ?? ["保存に失敗しました。"]).join("\n");
         if (!result.blockedReason) {
-          message += backupFailed
-            ? "\nこの端末への自動保存もできていないため、画面を閉じないでください。"
-            : "\n入力内容はこの端末に残っています。";
+          if (backupFailed) {
+            message += "\nこの端末への自動保存もできていないため、画面を閉じないでください。";
+          } else if (offerPending) {
+            message += "\nこの端末にはまだ自動保存していないため、画面を閉じないでください。";
+          } else {
+            message += "\n入力内容はこの端末に残っています。";
+          }
         }
         setSaveStatus("保存に失敗しました。", "#a02622");
         showSaveNotice(message, []);
@@ -882,7 +910,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       } else {
         serverSavedAt = Date.now();
         dirty = editSeq !== seqAtStart;
-        if (!dirty) {
+        // 提示に答えていない間は、古い下書きと提示を残す(保存の副作用で黙って消さない)
+        if (!dirty && !offerPending) {
           // サーバー側と揃ったので、この端末のバックアップと復元バー(元に戻すを含む)はもう不要
           clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
           removeRestoreBar();
