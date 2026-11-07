@@ -18,7 +18,8 @@ export interface SaveGuardResult {
 export interface SaveGuardOptions {
   /**
    * 利用者が「この回の手書き・画像の解答が保存で消えてもよい」と明示的に同意したとき true。
-   * 既定は false(従来どおりブロック)。同意は画面を開いている間だけ有効で、保存されない。
+   * 既定は false(従来どおりブロック)。値は端末共通の設定(easysmarky:prefs)から来る。
+   * その設定は保存され、次に開く画面や共有端末の次の利用者にも効く。
    */
   allowBinaryLoss?: boolean;
 }

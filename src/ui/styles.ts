@@ -253,11 +253,12 @@ const BASE_CSS = `
 }
 .es-warning-actions button.secondary { border-color: #d8c3a2; }
 /* ===== 設定ダイアログ(ヘッダの「設定」から開く) ===== */
+/* .es-root(全画面・z-index 2147483000)より上に出す。低いままだと全画面の画面に隠れて押せない */
 .es-settings {
   display: none;
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 2147483001;
   align-items: center;
   justify-content: center;
   padding: 16px;

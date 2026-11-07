@@ -58,6 +58,16 @@ export function onPrefsChange(listener: () => void): () => void {
   };
 }
 
+function notifyPrefsChange(): void {
+  for (const listener of listeners) {
+    try {
+      listener();
+    } catch {
+      /* 1つの購読の失敗で、他の画面への通知を止めない */
+    }
+  }
+}
+
 /**
  * 指定した項目だけ書き換える。他の項目は保つ。null を渡すとその項目の記憶を消す。
  * 戻り値は書けたかどうか。書けなければ、購読には知らせない(表示が「変わった」と誤認させないため)。
@@ -69,12 +79,14 @@ export function updatePrefs(patch: Partial<Pick<Prefs, "zoom" | "direction" | "a
   } catch {
     return false;
   }
-  for (const listener of listeners) {
-    try {
-      listener();
-    } catch {
-      /* 1つの購読の失敗で、他の画面への通知を止めない */
-    }
-  }
+  notifyPrefsChange();
   return true;
+}
+
+// 別のタブで設定が変わったときも、開いている画面に届ける(storage イベントは書いたタブ以外に届く)。
+// 設定以外のキーの変更では知らせない。localStorage.clear() で key が null のときは知らせる。
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === KEY || event.key === null) notifyPrefsChange();
+  });
 }

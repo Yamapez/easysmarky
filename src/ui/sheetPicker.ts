@@ -2,6 +2,7 @@ import { fetchCurrentUser, fetchStudentSheetList, studentCodeFromLoginId } from 
 import type { BaseSheetSummary, StudentSheetSummary, StudentSubjectRow } from "../api/types";
 import { loadSheetSummaries, sheetSummaryId, type SheetSummaries, type SheetSummary } from "../storage/backup";
 import { loadLastSheet } from "../storage/listState";
+import { loadPrefs } from "../storage/prefs";
 
 export interface SelectedSheet {
   studentCode: string;
@@ -66,11 +67,22 @@ function overdueLevel(base: BaseSheetSummary, now: number): "std" | "final" | nu
   return null;
 }
 
+/**
+ * 一覧で「保存不可」と出すか。要約の「手書きがある」と、端末の設定(手書きのある回の保存を許可)から毎回決める。
+ * 要約には設定を入れない。設定を変えたあと、開いたことのない回と同じく、開いたことのある回も正しく出すため。
+ */
+function isSheetLocked(cached: SheetSummary | undefined, allowBinary: boolean): boolean {
+  // 旧版の要約(hasBinary が無い)は blocked を読む。設定が切れているとき、旧版の blocked は正しい値だった
+  const hasBinary = cached?.hasBinary ?? cached?.blocked ?? false;
+  return hasBinary && !allowBinary;
+}
+
 function statusLabel(
   sheetSummary: StudentSheetSummary | null,
   cached: SheetSummary | undefined,
+  allowBinary: boolean,
 ): { text: string; cls: string } {
-  if (cached?.blocked) return { text: "手書きあり・保存不可", cls: "locked" };
+  if (isSheetLocked(cached, allowBinary)) return { text: "手書きあり・保存不可", cls: "locked" };
   if (!sheetSummary) return { text: "未着手", cls: "idle" };
   if (sheetSummary.submitted_at) return { text: "提出済み", cls: "done" };
   return { text: "下書きあり", cls: "" };
@@ -162,6 +174,8 @@ export async function renderSheetPicker(container: HTMLElement, opts: SheetPicke
     const studentCode = studentCodeFromLoginId(currentUser.user.login_id);
     const list = await fetchStudentSheetList(studentCode);
     const summaries: SheetSummaries = loadSheetSummaries(studentCode);
+    // 設定は一覧の描画で1回だけ読む(行ごとに localStorage を読まない)
+    const allowBinary = loadPrefs().allowBinaryLoss;
     const last = loadLastSheet(studentCode);
 
     container.innerHTML = "";
@@ -226,7 +240,7 @@ export async function renderSheetPicker(container: HTMLElement, opts: SheetPicke
         const { base, sheetSummary, submitted } = entry;
         const times = sheetSummary ? sheetSummary.times : 1;
         const cached = summaries[sheetSummaryId(base.id, times)];
-        const status = statusLabel(sheetSummary, cached);
+        const status = statusLabel(sheetSummary, cached, allowBinary);
         const overdue = submitted ? null : overdueLevel(base, now);
 
         const btn = document.createElement("button");
@@ -263,14 +277,15 @@ export async function renderSheetPicker(container: HTMLElement, opts: SheetPicke
         sub.className = "es-sub";
         sub.style.display = "block";
         const deadlineText = formatDeadline(base);
-        sub.textContent = cached?.blocked
+        const locked = isSheetLocked(cached, allowBinary);
+        sub.textContent = locked
           ? [deadlineText, "公式画面をご利用ください"].filter(Boolean).join(" ・ ")
           : deadlineText;
         main.appendChild(sub);
         btn.appendChild(main);
 
         // 保存不可の回は進捗を出しても意味がないので「—」にする
-        btn.appendChild(progressElement(cached?.blocked ? undefined : cached, submitted));
+        btn.appendChild(progressElement(locked ? undefined : cached, submitted));
 
         btn.addEventListener("click", () => select(row, entry));
         container.appendChild(btn);

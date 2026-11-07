@@ -7,6 +7,7 @@ import { buildFieldForSave, checkSaveGuard, type BuiltZipEntry } from "../model/
 import { loadPrefs } from "../storage/prefs";
 import { buildAnswersZip } from "./buildZip";
 import {
+  binaryGrownDuringSendIds,
   binaryGrownFieldIds,
   binarySnapshotsOf,
   findConflicts,
@@ -29,7 +30,11 @@ export interface SaveDraftParams {
   baseline: ReadonlyMap<number, string>;
   /** true なら他所での変更を確かめずに送る。利用者が「上書きして保存」を選んだときだけ */
   overwrite?: boolean;
-  /** 利用者が「手書き・画像の解答が保存で消えてもよい」と同意しているか(この画面の間だけ) */
+  /**
+   * 手書き・画像のある回を保存してよい、という同意があるか。
+   * formView は、読み込み時に手書きがある回で、保存ボタンが有効なとき(= 端末共通の設定 easysmarky:prefs で許可済みのとき)だけ true を渡す。
+   * 読み込み時に手書きが無かった回は false のままなので、その後に増えた手書きは「同意の外」として止まる。
+   */
   allowBinaryLoss?: boolean;
   /**
    * 同意したとき(読み込み時)の、手書き・画像のある設問の中身。
@@ -69,6 +74,11 @@ export interface SaveDraftResult {
   nextBinary?: Map<number, BinarySnapshot>;
   /** 同意のあとに手書き・画像が増えた設問。送信はしていない */
   binaryGrownFieldIds?: number[];
+  /**
+   * 送信中(保存直前の再取得〜保存後の再取得の間)に手書き・画像が増えた・変わった設問の数。
+   * その設問は同意の基準から外すので、次の保存は「増えた」として止まる
+   */
+  binaryGrownDuringSave?: number;
 }
 
 /**
@@ -92,6 +102,8 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
     return { ok: false, errorKind: described.kind, errors: [described.message] };
   }
   const binaryBefore = totalBinaryCount(latest.base_sheet_fields);
+  // 送信の直前の手書きの中身。保存後の再取得と比べ、送信の間に増えた・変わった設問を見つけるために使う
+  const binaryAtSend = binarySnapshotsOf(latest.base_sheet_fields);
   if (params.allowBinaryLoss) {
     // 同意は読み込み時の手書きに対するもの。同意のあとに手書きが増えた(または中身が変わった)なら送らない
     const grown = binaryGrownFieldIds(latest.base_sheet_fields, params.consentedBinary ?? new Map());
@@ -106,7 +118,12 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
   } else {
     const latestGuard = checkSaveGuard(latest.base_sheet_fields.map((raw) => ({ raw })));
     if (latestGuard.blocked) {
-      return { ok: false, blockedReason: latestGuard.reason };
+      // 設定で許可済みなのに止まったのは、読み込み時には手書きが無く、今の画面では許可を選べないため。
+      // 「設定で許可」は案内にならないので、開き直しを案内する
+      const reason = loadPrefs().allowBinaryLoss
+        ? "保存の前に、サーバー側で手書き・画像の解答が増えていたため、送っていません。この画面を閉じて開き直し、内容を確かめてください。"
+        : latestGuard.reason;
+      return { ok: false, blockedReason: reason };
     }
   }
 
@@ -136,7 +153,8 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
         lineHeight: field.lineHeight,
         color: field.color,
       });
-      local.set(id, fingerprintSent(body));
+      // 送り返す画像のメタデータの件数を、送ったあとの指紋に含める(含めないと、照合できなかった保存のあとに誤った競合になる)
+      local.set(id, fingerprintSent(body, field.raw.answer_images?.length ?? 0));
     } else {
       // 編集できない設問は読み込み時の内容をそのまま送り返すので、送るのは raw の指紋
       local.set(id, fingerprintField(field.raw));
@@ -183,10 +201,15 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
   let nextBaseline: Map<number, string> = local;
   let binaryAfter: number | undefined;
   let nextBinary: Map<number, BinarySnapshot> | undefined;
+  let grownDuringSave: number[] = [];
   try {
     const reFetched = await fetchDigitalReport(params.verifyQuery);
     binaryAfter = totalBinaryCount(reFetched.base_sheet_fields);
     nextBinary = binarySnapshotsOf(reFetched.base_sheet_fields);
+    // 送信の間に増えた・変わった手書きは、利用者が見ていない内容。次の保存の基準(同意)に入れない。
+    // 基準から外すと、次の保存は「同意のあとに増えた」として止まり、開き直しを求められる
+    grownDuringSave = binaryGrownDuringSendIds(reFetched.base_sheet_fields, binaryAtSend);
+    for (const id of grownDuringSave) nextBinary.delete(id);
     const byId = new Map(reFetched.base_sheet_fields.map((f) => [f.id, f]));
     for (const [id, expected] of sentTexts) {
       const serverField = byId.get(id);
@@ -203,5 +226,15 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
     verified = false;
   }
 
-  return { ok: true, verified, mismatchedFieldIds, nextBaseline, sent, binaryBefore, binaryAfter, nextBinary };
+  return {
+    ok: true,
+    verified,
+    mismatchedFieldIds,
+    nextBaseline,
+    sent,
+    binaryBefore,
+    binaryAfter,
+    nextBinary,
+    binaryGrownDuringSave: grownDuringSave.length > 0 ? grownDuringSave.length : undefined,
+  };
 }

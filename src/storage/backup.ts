@@ -46,8 +46,13 @@ export interface SheetSummary {
   total: number;
   /** 入力済みの設問数 */
   filled: number;
-  /** checkSaveGuard が保存をブロックする回か */
-  blocked: boolean;
+  /**
+   * 手書き・画像の解答がある回か(設定に関わらない値。一覧は端末の設定と合わせて「保存不可」を決める)。
+   * 旧版(v0.14.0)は blocked に「設定で保存不可か」を入れていた。hasBinary が無いときだけ blocked を読む(一覧の sheetPicker.ts)。
+   */
+  hasBinary?: boolean;
+  /** 旧版(v0.14.0)の名前。新しい版では書かない。hasBinary が無いときの後方互換のためだけに読む */
+  blocked?: boolean;
   savedAt: number;
 }
 
