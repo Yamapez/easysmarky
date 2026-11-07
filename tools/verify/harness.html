@@ -255,6 +255,20 @@ window.__esServerHandwrite = (id) => {
   target.answer_images = [{ id: 990 + id, base_sheet_field_id: id, idx: 0, x: 0, y: 0, width: 10, height: 10 }];
   return true;
 };
+// 他所で手書きが1件増えたことを再現する(既存の手書きは残す)。手書きの同意のあとの増加を見る
+window.__esServerAddImage = (id, imageId) => {
+  const target = REPORT.base_sheet_fields.find((f) => f.id === id);
+  if (!target) return false;
+  target.answer_images = [...(target.answer_images || []), { id: imageId, base_sheet_field_id: id, idx: 0, x: 0, y: 0, width: 10, height: 10 }];
+  return true;
+};
+// 他所で canvas の筆跡が変わったことを再現する(件数は同じまま中身だけ変わる)
+window.__esServerSetCanvas = (id, data) => {
+  const target = REPORT.base_sheet_fields.find((f) => f.id === id);
+  if (!target) return false;
+  target.base64_canvas = data;
+  return true;
+};
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String(input);
@@ -322,6 +336,9 @@ try {
   for (const [key, value] of Object.entries(SCN.seedStorage || {})) localStorage.setItem(key, value);
   // 下書きを残したあとに他所で変わった、という状態を作る(開く前のサーバー側の答え)
   for (const [id, text] of Object.entries(SCN.serverTexts || {})) window.__esServerSet(Number(id), text);
+  // 最初から手書き・canvas の筆跡がある回を作る(手書きの同意の検査用)
+  for (const id of SCN.serverHandwrite || []) window.__esServerHandwrite(id);
+  for (const [id, data] of Object.entries(SCN.serverCanvas || {})) window.__esServerSetCanvas(Number(id), data);
 } catch (e) { /* localStorage が使えない環境は無視 */ }
 
 // ============================================================

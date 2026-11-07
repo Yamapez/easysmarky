@@ -248,4 +248,132 @@ export async function run(ctx) {
   await sleep(100);
   check("D4 関係の無いキーの書き込みでは知らせない(通知は1回だけ)",
     (await warnings()).split("別のタブでも編集").length - 1 === 1, await warnings());
+
+  // ================================================================ G. 手書きのある回は、設定で許可したときだけ保存でき、許可のあとの増加は送らない
+  // 回は d4binary(ウに手書き1件・イに canvas の筆跡。件数の合計は2)。許可は設定(easysmarky:prefs)から取る。
+  const saveDisabled = () => ev(`${sel(".es-save-btn")}.disabled`);
+  const statusNow = () => text(".es-save-status");
+  const settingsOpen = () => ev(`${sel(".es-settings")}?.style.display === "flex"`);
+  const settingsChecked = () => ev(`${sel(".es-settings-row input")}?.checked ?? null`);
+  const setSettingsCheck = (on) => ev(`(() => {
+    const b = ${sel(".es-settings-row input")};
+    if (!b) return false;
+    b.checked = ${on};
+    b.dispatchEvent(new Event("change"));
+    return true;
+  })()`);
+  /** 設定の「閉じる」(ヘッダの「閉じる」と区別するため、設定の中のボタンを押す) */
+  const closeSettingsByButton = () => ev(`${sel(".es-settings-actions button")}.click(), true`);
+  const pressKey = (init) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify(init)})), true`);
+  const overlayVisible = () => ev(`document.getElementById("easysmarky-host")?.style.display !== "none"`);
+  const clickSave = async () => {
+    await ev(`${sel(".es-save-btn")}.click(), true`);
+    await sleep(500);
+  };
+  const LOCK_TEXT = "手書き・画像のある回は保存できません";
+  /** ヘッダの「設定」を押して設定を開く */
+  const openSettings = () => clickButton("設定");
+
+  // G1: 既定では保存ボタンが無効。警告欄も同意欄も出さず、状態表示に理由と設定への案内を出す
+  await openFresh("d4binary");
+  await openSheet();
+  check("D4 手書きのある回は、設定で許可するまで保存ボタンが無効",
+    (await saveDisabled()) === true, await saveDisabled());
+  // 手書きの警告文と同意欄は、フォームからなくなっている(文字のはみ出しなど別の警告は対象外)
+  check("D4 フォームには手書きの警告文と同意欄を出さない",
+    (await ev(`!!${sel(".es-consent")}`)) === false && !(await warnings()).includes("手書き・画像の解答が含まれています"),
+    { warnings: await warnings() });
+  check("D4 保存できない理由は状態表示に出す(設定への案内つき)",
+    (await statusNow()).includes(LOCK_TEXT) && (await statusNow()).includes("設定"), await statusNow());
+
+  // G2: 設定で許可すると、開き直さずに保存ボタンが有効になり、確認は出さずに送る。件数の表示も出す
+  await stubConfirm(true);
+  await openSettings();
+  check("D4 ヘッダの「設定」で設定を開ける", (await settingsOpen()) === true, await settingsOpen());
+  await setSettingsCheck(true);
+  check("D4 設定の変更は、開いている画面の保存ボタンにその場で届く", (await saveDisabled()) === false, await saveDisabled());
+  await closeSettingsByButton();
+  check("D4 設定の「閉じる」で設定だけが閉じる", (await settingsOpen()) === false && (await overlayVisible()) === true, await settingsOpen());
+  const beforeConsentSave = await postCount();
+  await clickSave();
+  check("D4 許可したあとの保存は、確認を出さずに送る",
+    (await postCount()) === beforeConsentSave + 1 && (await confirmCount()) === 0,
+    { posts: await postCount(), beforeConsentSave, confirms: await confirmCount() });
+  check("D4 保存後に、手書き・画像の件数(保存前 → 保存後)を出す",
+    (await warnings()).includes("保存前 2 件 → 保存後 2 件"), await warnings());
+  const prefs = await ev(`localStorage.getItem("easysmarky:prefs")`);
+  check("D4 許可は端末の設定(easysmarky:prefs)に残る", (prefs || "").includes('"allowBinaryLoss":true'), prefs);
+
+  // G3: 設定が開いている間は、裏の画面で ⌘S が保存を起こさない。Esc は設定だけを閉じ、画面は残る
+  await openFresh("d4binary");
+  await openSheet();
+  await openSettings();
+  await setSettingsCheck(true);
+  const beforeKeys = await postCount();
+  await pressKey({ key: "s", metaKey: true, bubbles: true });
+  await sleep(400);
+  check("D4 設定が開いている間は ⌘S で保存されない", (await postCount()) === beforeKeys, await postCount());
+  await pressKey({ key: "Escape", bubbles: true });
+  await sleep(150);
+  check("D4 Esc は設定だけを閉じ、オーバーレイは開いたまま",
+    (await settingsOpen()) === false && (await overlayVisible()) === true,
+    { open: await settingsOpen(), visible: await overlayVisible() });
+
+  // G4: 許可のあとに、他所で手書きが1件増えたら送らない(件数は 2→3。判定は画像の id で行う)
+  await openFresh("d4binary");
+  await openSheet();
+  await openSettings();
+  await setSettingsCheck(true);
+  await closeSettingsByButton();
+  await ev(`window.__esServerAddImage(3, 9001), true`);
+  const beforeGrow = await postCount();
+  await clickSave();
+  await until(`(${sel(".es-save-status")}?.textContent || "").includes("保存に失敗")`);
+  check("D4 許可のあとに手書きが増えていたら送らず、理由に手書きと書く",
+    (await postCount()) === beforeGrow && (await errorText()).includes("手書き"),
+    { posts: await postCount(), beforeGrow, err: await errorText() });
+
+  // G5: 件数が同じまま、canvas の筆跡の中身だけが他所で変わったら送らない(件数だけの比較では取りこぼす)
+  await openFresh("d4binary");
+  await openSheet();
+  await openSettings();
+  await setSettingsCheck(true);
+  await closeSettingsByButton();
+  await ev(`window.__esServerSetCanvas(2, "data:image/png;base64,BBBB"), true`);
+  const beforeCanvas = await postCount();
+  await clickSave();
+  await until(`(${sel(".es-save-status")}?.textContent || "").includes("保存に失敗")`);
+  check("D4 許可のあとに canvas の筆跡が他所で変わっていたら、件数が同じでも送らない",
+    (await postCount()) === beforeCanvas && (await errorText()).includes("手書き"),
+    { posts: await postCount(), beforeCanvas, err: await errorText() });
+
+  // G6: 許可が端末に残っていれば、開いた時点から保存でき、設定をオフにするとその場で無効に戻る
+  await openFresh("d4binaryOn");
+  await openSheet();
+  check("D4 端末に許可が残っていれば、開いた時点から保存できる",
+    (await saveDisabled()) === false && !(await statusNow()).includes(LOCK_TEXT), { disabled: await saveDisabled(), status: await statusNow() });
+  await openSettings();
+  check("D4 設定を開くと、残っている許可がチェックに出る", (await settingsChecked()) === true, await settingsChecked());
+  await setSettingsCheck(false);
+  check("D4 設定をオフにすると、開いている画面の保存ボタンがその場で無効に戻る",
+    (await saveDisabled()) === true, await saveDisabled());
+  await closeSettingsByButton();
+
+  // G7: 一覧の要約も設定に合わせる。許可の前は「保存不可」、許可したあと一覧に戻ると「保存不可」は出ない
+  await openFresh("d4binary");
+  await openSheet();
+  await ev(`${sel(".es-header-back")}.click(), true`);
+  await until(`!!${sel(".es-list-item")}`);
+  await sleep(300);
+  const lockedRow = await ev(`${sel(".es-list-item")}?.textContent ?? ""`);
+  check("D4 許可の前は、一覧の回が「手書きあり・保存不可」と出る", lockedRow.includes("保存不可"), lockedRow);
+  await openSheet();
+  await openSettings();
+  await setSettingsCheck(true);
+  await closeSettingsByButton();
+  await ev(`${sel(".es-header-back")}.click(), true`);
+  await until(`!!${sel(".es-list-item")}`);
+  await sleep(300);
+  const allowedRow = await ev(`${sel(".es-list-item")}?.textContent ?? ""`);
+  check("D4 許可したあと一覧に戻ると、同じ回は「保存不可」と出ない", !allowedRow.includes("保存不可"), allowedRow);
 }

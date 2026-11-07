@@ -3,6 +3,7 @@ import { renderSheetPicker, type SelectedSheet } from "./sheetPicker";
 import { renderFormView } from "./formView";
 import { describeApiError } from "../api/client";
 import { installViewportSync, type ViewportSync } from "./viewport";
+import { createSettingsDialog, type SettingsDialog } from "./settingsView";
 
 export interface EasySmarkyController {
   toggle: () => void;
@@ -66,6 +67,7 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
   let shadow: ShadowRoot;
   let content: HTMLElement;
   let header: HeaderHandle;
+  let settings: SettingsDialog | null = null;
   let scrollLockBackup: { html: string; body: string } | null = null;
   let leaveGuard: (() => boolean) | null = null;
   /** 一覧で回を開いたときの一覧のスクロール位置(戻ったときに復元する) */
@@ -144,6 +146,14 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
       actions.appendChild(openBtn);
     }
 
+    // 端末共通の設定(手書きのある回の保存の許可など)。どの画面からでも開ける
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "es-header-btn";
+    settingsBtn.textContent = "設定";
+    settingsBtn.addEventListener("click", () => settings?.open());
+    actions.appendChild(settingsBtn);
+
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "es-close";
@@ -186,6 +196,7 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
 
     root.appendChild(panel);
     shadow.appendChild(root);
+    settings = createSettingsDialog(shadow);
 
     // Esc で閉じる。1回目は入力欄からフォーカスを外すだけにして誤爆(入力中に閉じてしまう)を防ぐ
     window.addEventListener(
@@ -193,6 +204,12 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
       (event: KeyboardEvent) => {
         if (event.key !== "Escape") return;
         if (!host || host.style.display === "none") return;
+        // 設定が開いている間は、Esc は設定を閉じるだけ(その下の画面は閉じない)
+        if (settings?.isOpen()) {
+            event.preventDefault();
+            settings.close();
+            return;
+        }
         // 読むモードが開いている間は、Esc をそちら(formView の読むモード)に任せる
         if (shadow.querySelector(".es-reader")) return;
         // IME確定のキャンセルでも Escape が飛んでくるブラウザがあるため無視する

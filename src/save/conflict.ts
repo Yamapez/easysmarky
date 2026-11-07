@@ -66,3 +66,66 @@ export function findConflicts(
   }
   return ids;
 }
+
+/**
+ * 設問の手書き・画像の中身。件数ではなく、画像の id の集合と canvas の文字列で持つ。
+ * 件数だけだと、キャンバスへの筆跡の追加や画像の差し替え(件数が同じ)を取りこぼすため。
+ */
+export interface BinarySnapshot {
+  /** 画像の印。id のある画像は "id:<id>"、id の無い画像は "anon:<順番>"(null を1つにまとめると増えても見逃すため) */
+  imageIds: ReadonlySet<string>;
+  canvas: string | null;
+}
+
+/** 手書き・画像が無い設問は null */
+export function binarySnapshotOf(raw: BaseSheetField): BinarySnapshot | null {
+  const imageIds = new Set<string>();
+  let anon = 0;
+  for (const img of raw.answer_images ?? []) {
+    if (img.id != null) imageIds.add(`id:${img.id}`);
+    else imageIds.add(`anon:${anon++}`);
+  }
+  const canvas = raw.base64_canvas ?? null;
+  if (imageIds.size === 0 && !canvas) return null;
+  return { imageIds, canvas };
+}
+
+/** 手書き・画像のある設問だけの、設問ID → 中身 の対応 */
+export function binarySnapshotsOf(fields: BaseSheetField[]): Map<number, BinarySnapshot> {
+  const map = new Map<number, BinarySnapshot>();
+  for (const f of fields) {
+    const snap = binarySnapshotOf(f);
+    if (snap) map.set(f.id, snap);
+  }
+  return map;
+}
+
+/** シート全体の手書き・画像の件数(画像の件数 + canvas の有無)。保存前後の表示に使う */
+export function totalBinaryCount(fields: BaseSheetField[]): number {
+  return fields.reduce((sum, f) => sum + (f.answer_images?.length ?? 0) + (f.base64_canvas ? 1 : 0), 0);
+}
+
+/**
+ * 同意したあとに、手書き・画像が増えた、または canvas の中身が変わった設問のID。
+ * 同意の時点に無かった画像の id があれば増えた、canvas の文字列が違えば変わった、とみなす。
+ * 消えただけ(保存の結果として減った)は止めない。
+ */
+export function binaryGrownFieldIds(
+  fresh: BaseSheetField[],
+  consented: ReadonlyMap<number, BinarySnapshot>,
+): number[] {
+  const ids: number[] = [];
+  for (const f of fresh) {
+    const now = binarySnapshotOf(f);
+    if (!now) continue;
+    const then = consented.get(f.id);
+    if (!then) {
+      ids.push(f.id);
+      continue;
+    }
+    const newImage = [...now.imageIds].some((id) => !then.imageIds.has(id));
+    const canvasChanged = now.canvas !== null && now.canvas !== then.canvas;
+    if (newImage || canvasChanged) ids.push(f.id);
+  }
+  return ids;
+}

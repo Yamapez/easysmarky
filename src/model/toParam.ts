@@ -15,21 +15,34 @@ export interface SaveGuardResult {
   reason?: string;
 }
 
+export interface SaveGuardOptions {
+  /**
+   * 利用者が「この回の手書き・画像の解答が保存で消えてもよい」と明示的に同意したとき true。
+   * 既定は false(従来どおりブロック)。同意は画面を開いている間だけ有効で、保存されない。
+   */
+  allowBinaryLoss?: boolean;
+}
+
 /**
  * 手書き・画像解答(answer_images / base64_canvas)がシート内に1つでも存在する場合は
  * 保存をブロックする。GET APIがこれらの画像バイナリを再取得可能な形で返すかどうかを
  * 実機で確認できていないため、誤って消してしまうリスクを避けるための安全策。
+ * 既定はブロックのまま。利用者の同意(allowBinaryLoss)があるときだけ通すが、
+ * 送る直前に手書きが増えていないかは save/save.ts で別に確かめる。
  */
-export function checkSaveGuard(fields: { raw: EditableField["raw"] }[]): SaveGuardResult {
-  const hasBinaryContent = fields.some((f) => fieldHasBinaryContent(f.raw));
-  if (hasBinaryContent) {
-    return {
-      blocked: true,
-      reason:
-        "この回答用紙には手書き・画像の解答が含まれています。現バージョンのeasysmarkyは、それらの解答が消えてしまう事故を防ぐため保存を無効化しています。お手数ですが公式のSmarky画面から保存してください。",
-    };
+export function checkSaveGuard(
+  fields: { raw: EditableField["raw"] }[],
+  opts: SaveGuardOptions = {},
+): SaveGuardResult {
+  const hasBinary = fields.some((f) => fieldHasBinaryContent(f.raw));
+  if (!hasBinary || opts.allowBinaryLoss) {
+    return { blocked: false };
   }
-  return { blocked: false };
+  return {
+    blocked: true,
+    reason:
+      "この回答用紙には手書き・画像の解答が含まれています。現バージョンのeasysmarkyは、それらの解答が消えてしまう事故を防ぐため保存を無効化しています。右上の「設定」で許可すると保存できます(手書き・画像の解答が消えるおそれがあります)。公式のSmarky画面から保存することもできます。",
+  };
 }
 
 export interface BuiltZipEntry {

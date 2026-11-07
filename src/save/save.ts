@@ -4,8 +4,18 @@ import type { DigitalReportQuery, DigitalReportResponse, SaveErrorResponse } fro
 import { isEditableField, type EditableField } from "../model/field";
 import { renderedText } from "../model/gridLayout";
 import { buildFieldForSave, checkSaveGuard, type BuiltZipEntry } from "../model/toParam";
+import { loadPrefs } from "../storage/prefs";
 import { buildAnswersZip } from "./buildZip";
-import { findConflicts, fingerprintField, fingerprintSent, fingerprintsOf } from "./conflict";
+import {
+  binaryGrownFieldIds,
+  binarySnapshotsOf,
+  findConflicts,
+  fingerprintField,
+  fingerprintSent,
+  fingerprintsOf,
+  totalBinaryCount,
+  type BinarySnapshot,
+} from "./conflict";
 
 export interface SaveDraftParams {
   fields: EditableField[];
@@ -19,6 +29,13 @@ export interface SaveDraftParams {
   baseline: ReadonlyMap<number, string>;
   /** true なら他所での変更を確かめずに送る。利用者が「上書きして保存」を選んだときだけ */
   overwrite?: boolean;
+  /** 利用者が「手書き・画像の解答が保存で消えてもよい」と同意しているか(この画面の間だけ) */
+  allowBinaryLoss?: boolean;
+  /**
+   * 同意したとき(読み込み時)の、手書き・画像のある設問の中身。
+   * 同意のあとにこれより増えた、または中身が変わった手書きがあれば送らない
+   */
+  consentedBinary?: ReadonlyMap<number, BinarySnapshot>;
 }
 
 /** 送信した編集可能な設問の値。端末の下書きの基準(base)を、送った内容に合わせ直すために使う */
@@ -45,6 +62,13 @@ export interface SaveDraftResult {
   nextBaseline?: Map<number, string>;
   /** 送った編集可能な設問の値 */
   sent?: Map<number, SentValues>;
+  /** 手書き・画像の件数。保存直前の再取得(before)と、保存後の再取得(after)。after は再取得できなかったら undefined */
+  binaryBefore?: number;
+  binaryAfter?: number;
+  /** 保存後の再取得で見た、手書き・画像の中身。次の保存の基準になる。照合できなかったら undefined */
+  nextBinary?: Map<number, BinarySnapshot>;
+  /** 同意のあとに手書き・画像が増えた設問。送信はしていない */
+  binaryGrownFieldIds?: number[];
 }
 
 /**
@@ -54,7 +78,7 @@ export interface SaveDraftResult {
  * 3. 送信し、保存後にサーバーへ再取得して自分が送ったテキストが反映されているかを照合する
  */
 export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResult> {
-  const guard = checkSaveGuard(params.fields);
+  const guard = checkSaveGuard(params.fields, { allowBinaryLoss: params.allowBinaryLoss });
   if (guard.blocked) {
     return { ok: false, blockedReason: guard.reason };
   }
@@ -67,9 +91,23 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
     const described = describeApiError(e);
     return { ok: false, errorKind: described.kind, errors: [described.message] };
   }
-  const latestGuard = checkSaveGuard(latest.base_sheet_fields.map((raw) => ({ raw })));
-  if (latestGuard.blocked) {
-    return { ok: false, blockedReason: latestGuard.reason };
+  const binaryBefore = totalBinaryCount(latest.base_sheet_fields);
+  if (params.allowBinaryLoss) {
+    // 同意は読み込み時の手書きに対するもの。同意のあとに手書きが増えた(または中身が変わった)なら送らない
+    const grown = binaryGrownFieldIds(latest.base_sheet_fields, params.consentedBinary ?? new Map());
+    if (grown.length > 0) {
+      return {
+        ok: false,
+        binaryGrownFieldIds: grown,
+        blockedReason:
+          `同意のあとに、サーバー側で手書き・画像の解答が増えた(または変わった)設問が${grown.length}件あるため、送っていません。この画面を閉じて開き直し、もう一度内容を確かめてください。`,
+      };
+    }
+  } else {
+    const latestGuard = checkSaveGuard(latest.base_sheet_fields.map((raw) => ({ raw })));
+    if (latestGuard.blocked) {
+      return { ok: false, blockedReason: latestGuard.reason };
+    }
   }
 
   // 送る内容はここから同期的に組み立てる。取得を待つ間の編集は、この組み立てに入った分だけが送られる
@@ -112,6 +150,14 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
     }
   }
 
+  // 送信の直前に、手書きを送る許可を読み直す。許可を確かめたあと(取得の待ち時間)に設定がオフにされていたら送らない
+  if (params.allowBinaryLoss && binaryBefore > 0 && !loadPrefs().allowBinaryLoss) {
+    return {
+      ok: false,
+      blockedReason: "手書き・画像のある回の保存が、送る直前に設定でオフにされたため、送っていません。",
+    };
+  }
+
   const zipBlob = buildAnswersZip(zipEntries);
 
   try {
@@ -135,8 +181,12 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
   const mismatchedFieldIds: number[] = [];
   let verified = true;
   let nextBaseline: Map<number, string> = local;
+  let binaryAfter: number | undefined;
+  let nextBinary: Map<number, BinarySnapshot> | undefined;
   try {
     const reFetched = await fetchDigitalReport(params.verifyQuery);
+    binaryAfter = totalBinaryCount(reFetched.base_sheet_fields);
+    nextBinary = binarySnapshotsOf(reFetched.base_sheet_fields);
     const byId = new Map(reFetched.base_sheet_fields.map((f) => [f.id, f]));
     for (const [id, expected] of sentTexts) {
       const serverField = byId.get(id);
@@ -153,5 +203,5 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
     verified = false;
   }
 
-  return { ok: true, verified, mismatchedFieldIds, nextBaseline, sent };
+  return { ok: true, verified, mismatchedFieldIds, nextBaseline, sent, binaryBefore, binaryAfter, nextBinary };
 }
