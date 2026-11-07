@@ -210,46 +210,55 @@ export async function run(ctx) {
     !(await text(".es-autosave")).includes("自動保存できません"),
     { stored: afterDiscardTyped, autosave: await text(".es-autosave") });
 
-  // 復元の提示に答えるまでは、打っても古い下書きを上書きしない(提示と自動保存の停止を示す)
+  // 復元の提示が残っていても、打った最初の入力で古い下書きを退避してから自動保存を続ける
   await openHarness(send, `${URL_HARNESS}?scenario=d1restore`);
   await openSheet();
   await sleep(300);
   const seededDraft = await storedDraft();
   await setText("提示中に打った文");
   await sleep(1200); // 500ms の自動保存の遅延を十分に過ぎてから読む
-  const pendingDraft = await storedDraft();
-  check("D1 復元の提示に答えるまで、打っても古い下書きは上書きされない",
-    pendingDraft === seededDraft, { seededDraft, pendingDraft });
-  const pendingStatus = await text(".es-autosave");
-  check("D1 提示が残り、ヘッダに自動保存を止めていることを出す",
-    (await hasButton("復元する")) && pendingStatus.includes("自動保存を止めています"), pendingStatus);
-  // スマホではヘッダの表示が隠れるので、提示の文言が幅430pxでも見えることを確かめる
+  const mainAfterType = await storedDraft();
+  check("D1 提示が残っていても、打つと新しい入力が下書きに自動保存される",
+    mainAfterType !== null && JSON.parse(mainAfterType).fields["1"].text === "提示中に打った文", mainAfterType);
+  const archived = await ev(`localStorage.getItem("easysmarky:archive:2025HF249:1001:1")`);
+  check("D1 上書きの前に、古い下書きは別のキーへ退避されている", archived === seededDraft, { archived: archived !== null });
+  const offerNote = await warnings();
+  check("D1 提示は残り、退避したことを説明する",
+    (await hasButton("復元する")) && offerNote.includes("退避しました"), offerNote);
+  const typedStatus = await text(".es-autosave");
+  check("D1 自動保存は止まらず、ヘッダは通常どおり時刻を出す",
+    typedStatus.includes("この端末に自動保存 ") && !typedStatus.includes("failed"), typedStatus);
+
+  // スマホではヘッダの表示が隠れるので、説明の文言が幅430pxでも見えることを確かめる
   await setViewport(send, 430, 900);
   await sleep(200);
   const pendingNoteVisible = await ev(`(() => {
-    const w = [...${HOST}.querySelectorAll(".es-warning")].find((x) => x.textContent.includes("自動保存されません"));
+    const w = [...${HOST}.querySelectorAll(".es-warning")].find((x) => x.textContent.includes("退避しました"));
     return !!w && w.getBoundingClientRect().height > 0;
   })()`);
-  check("D1 提示の「自動保存されません」は幅430pxでも見える", pendingNoteVisible === true, pendingNoteVisible);
+  check("D1 退避の説明は幅430pxでも見える", pendingNoteVisible === true, pendingNoteVisible);
   await setViewport(send, 1400, 900);
   await sleep(200);
 
   await stubConfirm(false);
   await ev(`${sel(".es-header-back")}.click(), true`);
   await sleep(150);
-  const leavePending = await lastConfirm();
-  check("D1 提示に答えていない間の離脱は、今の入力が自動保存されていないと言う",
-    leavePending.includes("自動保存されていません") && !leavePending.includes("自動保存されていますが"), leavePending);
+  const leaveTyped = await lastConfirm();
+  check("D1 自動保存されている未保存の離脱は、従来どおりの文言を使う",
+    leaveTyped.includes("自動保存されていますが"), leaveTyped);
 
-  // 保存が成功しても、提示に答えていない間は古い下書きと提示を消さない
+  // 保存が成功したら、退避した古い下書きも提示も、サーバーと揃ったので消える
   await clickSave();
   await until(`${sel(".es-save-status")}.textContent.includes("保存済み")`, 8000);
   await sleep(300);
-  const afterSaveDraft = await storedDraft();
-  check("D1 提示に答えないまま保存しても、古い下書きと提示は残る",
-    afterSaveDraft === seededDraft && (await hasButton("復元する")), { afterSaveDraft: afterSaveDraft !== seededDraft });
+  const archiveAfterSave = await ev(`localStorage.getItem("easysmarky:archive:2025HF249:1001:1")`);
+  check("D1 保存が成功すると、退避した古い下書きも提示も消える",
+    archiveAfterSave === null && !(await hasButton("復元する")), { archiveAfterSave });
 
-  // 「復元する」に答えたあとは、自動保存が再開する
+  // 「復元する」に答えたあとも、入力はこの端末の下書きに自動保存される
+  await openHarness(send, `${URL_HARNESS}?scenario=d1restore`);
+  await openSheet();
+  await sleep(300);
   await clickButton("復元する");
   await sleep(300);
   await setText("復元のあとに打った文");

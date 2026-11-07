@@ -70,7 +70,7 @@ userscript ビルドでは vite.config.ts 内のカスタムプラグインが m
 - `src/save/` — `buildZip.ts`(fflateで無圧縮ZIP生成)、`save.ts`(保存ガード→ZIP→POST→再取得照合のオーケストレーション)
 - `src/storage/` — localStorageへの入力内容自動バックアップ(キー: `easysmarky:{studentCode}:{baseSheetId}:{times}`、値は `{v:2, savedAt, fields}`。v0.5.0以前のフラットな形式も読める)と、一覧に出す進捗の要約(キー: `easysmarky:summary:{studentCode}`)。一覧APIは設問を返さないため、進捗と「手書きあり・保存不可」は一度開いた回の要約だけから出す。
 v0.11.0 で、次の端末側の保存を足した: 「続きから」用の最後に開いた回(キー: `easysmarky:last:{studentCode}`、`src/storage/listState.ts`)と、端末共通の表示設定(キー: `easysmarky:prefs`、`src/storage/prefs.ts`。`zoom` は手動で変えた倍率、`direction` は手動で選んだ書字方向)。`saveBackup` と `saveSheetSummary` は boolean を返し、失敗を呼び出し側が警告に使う。保存成功後に残ってよいキーは `tools/verify/harness.html` の `KEEP_AFTER_SAVE` に列挙する(新しい永続キーを足したら必ず足す)。
-起動時に残っている下書きの「復元する/破棄する」に答えるまで、下書きは書かない(`offerPending`、`src/ui/formView.ts`)。古い下書きを今の入力で上書きしないため。要約は書き続ける。
+起動時に残っている下書きがある間の最初の入力で、古い下書きを `easysmarky:archive:{studentCode}:{baseSheetId}:{times}` へ退避してから、新しい入力を下書きに自動保存する(`offerPending`、`archiveBackupOnce`、`src/ui/formView.ts` と `src/storage/backup.ts`)。退避は保存成功か「破棄する」で消す。退避は一覧や画面からは出していない(この画面を開いている間の「復元する」だけが戻せる)。
 方向別の CSS は `src/ui/styles/{safety,list,mobile}.ts` を連結する(`OVERLAY_STYLES`)。キーボード追従は `src/ui/viewport.ts`(`--es-vvh` と `es-kbd`)。
 
 ### Smarky公式 app.js との対応

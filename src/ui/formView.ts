@@ -6,6 +6,8 @@ import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../mode
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
 import {
+  archiveBackupOnce,
+  clearArchive,
   clearBackup,
   debounce,
   loadBackup,
@@ -107,9 +109,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     let message = "保存されていない変更があります。\nこの端末には自動保存されていますが、Smarkyにはまだ反映されていません。\nこの画面を離れますか?";
     if (backupFailed) {
       message = "保存されていない変更があります。\nこの端末への自動保存にも失敗しているため、離れると入力内容が失われるおそれがあります。\nSmarkyにはまだ反映されていません。\nこの画面を離れますか?";
-    } else if (offerPending) {
-      // 復元の選択がまだなので、今の入力は自動保存されていない(古い下書きを守るため書いていない)
-      message = "保存されていない変更があります。\n復元の選択がまだのため、今の入力はこの端末に自動保存されていません。\nSmarkyにはまだ反映されていません。\nこの画面を離れますか?";
     }
     return window.confirm(message);
   });
@@ -440,7 +439,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   /** この端末に自動保存できていないか。true の間は警告を出し、離脱の確認もそう言う */
   let backupFailed = false;
-  /** 復元の選択肢に答えるまで true。true の間は古い下書きを上書きしないよう、下書きを書かない */
+  /** 復元の提示が出ていて、古い下書きがまだ退避されていない間 true。最初の入力で退避してから自動保存する */
   let offerPending = false;
 
   function persistSummary(savedAt: number): boolean {
@@ -456,10 +455,16 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   function persistNow(): void {
     const at = Date.now();
     if (offerPending) {
-      // 復元の提示に答えるまでは下書きを書かない。要約だけは更新して一覧の進捗を保つ
-      persistSummary(at);
-      refreshStatusText();
-      return;
+      // 古い下書きは、上書きする前に退避する。退避できなければ、今の入力では上書きしない(要約だけ更新)
+      if (!archiveBackupOnce(sheet.studentCode, sheet.baseSheetId, sheet.times)) {
+        persistSummary(at);
+        refreshStatusText();
+        return;
+      }
+      offerPending = false;
+      if (offerNoteEl) {
+        offerNoteEl.textContent = "入力を始めたため、古い下書きは退避しました。この画面を開いている間は「復元する」で戻せます。";
+      }
     }
     const ok = saveBackup(sheet.studentCode, sheet.baseSheetId, sheet.times, collectBackup(), at);
     persistSummary(at);
@@ -536,10 +541,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       return;
     }
     autosaveEl.classList.remove("failed");
-    if (offerPending) {
-      autosaveEl.textContent = "復元の選択まで自動保存を止めています";
-      return;
-    }
     autosaveEl.textContent = lastSavedAt ? `この端末に自動保存 ${formatTime(lastSavedAt)}` : "";
   }
 
@@ -673,6 +674,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   // 下書きの復元。復元バーは起動時に読んだ existingBackup から作り直す(ストレージは読み直さない)
   let restoreBarEl: HTMLElement | null = null;
+  /** 提示の説明行。最初の入力で退避したときに文言を更新する */
+  let offerNoteEl: HTMLElement | null = null;
   /** 復元した直後だけ、その直前の編集seq。ここから編集が入ると「元に戻す」は無効になる */
   let undoSeq: number | null = null;
 
@@ -680,7 +683,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     restoreBarEl?.remove();
     restoreBarEl = null;
     undoSeq = null;
-    // 提示に答えた(復元・破棄・元に戻す前の取り外し)ら、自動保存を再開する
+    offerNoteEl = null;
     offerPending = false;
     refreshStatusText();
   }
@@ -719,8 +722,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       : "この端末に保存された下書きが残っています。";
     bar.appendChild(message);
     const note = document.createElement("div");
-    note.textContent = "復元するか破棄するまで、新しい入力はこの端末に自動保存されません。";
+    note.textContent = "入力を始めると、古い下書きは退避してから新しい入力を自動保存します。";
     bar.appendChild(note);
+    offerNoteEl = note;
     const actions = document.createElement("div");
     actions.className = "es-warning-actions";
     const restoreBtn = document.createElement("button");
@@ -737,14 +741,17 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       // 復元で今の入力が消えるので、直前の値を控えてから当てる
       const before = collectBackup();
       applyValues(backup.fields);
+      // 復元した内容を先に下書きへ書く。古い下書きは、上書きの前に退避される(提示がまだ残っている今のうちに)
+      persistNow();
       showRestoredBanner(backup, before);
     });
     discardBtn.addEventListener("click", () => {
       // 破棄すると戻せない。離脱ガードと同じく確認を通す
       if (!window.confirm("この端末に保存された下書きを破棄します。\n破棄すると元に戻せません。よろしいですか?")) return;
       clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
+      clearArchive(sheet.studentCode, sheet.baseSheetId, sheet.times);
       removeRestoreBar();
-      // 提示が出ている間は下書きを書いていない。消したあと、今の入力をここで書く
+      // 消したあと、今の入力をここで書き直す(提示の後で打った分を残すため)
       if (dirty) persistNow();
     });
     notices.appendChild(bar);
@@ -910,10 +917,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       } else {
         serverSavedAt = Date.now();
         dirty = editSeq !== seqAtStart;
-        // 提示に答えていない間は、古い下書きと提示を残す(保存の副作用で黙って消さない)
+        // まだ退避していない古い下書きは、答えるまで残す(保存の副作用で黙って消さない)
         if (!dirty && !offerPending) {
-          // サーバー側と揃ったので、この端末のバックアップと復元バー(元に戻すを含む)はもう不要
+          // サーバー側と揃ったので、この端末のバックアップ・退避・復元バー(元に戻すを含む)はもう不要
           clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
+          clearArchive(sheet.studentCode, sheet.baseSheetId, sheet.times);
           removeRestoreBar();
         }
         refreshSaveState();

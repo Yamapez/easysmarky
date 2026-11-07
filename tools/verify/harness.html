@@ -213,7 +213,8 @@ const SCENARIO_NAME = new URLSearchParams(location.search).get("scenario");
 const SCN = (window.__esScenarios && SCENARIO_NAME && window.__esScenarios[SCENARIO_NAME]) || {};
 const scnDelay = (ms) => (ms ? new Promise((r) => setTimeout(r, ms)) : null);
 // 保存成功後に localStorage に残ってよいキー(下書きのバックアップ以外)。新しい永続キーを足したら書く
-const KEEP_AFTER_SAVE = [":summary:", "easysmarky:hint-", "easysmarky:last:", "easysmarky:prefs"];
+// 退避(easysmarky:archive:)は、古い下書きを上書きから守るための別のキー。下書きの後始末とは別に残りうる
+const KEEP_AFTER_SAVE = [":summary:", "easysmarky:hint-", "easysmarky:last:", "easysmarky:prefs", "easysmarky:archive:"];
 
 // ============================================================
 // fetch スタブ(保存はステートフル: 保存された answer_texts を REPORT に書き戻す)

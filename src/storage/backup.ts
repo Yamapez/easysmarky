@@ -89,6 +89,35 @@ export function clearBackup(studentCode: string, baseSheetId: number, times: num
   }
 }
 
+/** 復元の提示が残っている古い下書きを退避しておくキー。下書きとは別で、自動保存の対象にしない */
+function archiveKey(studentCode: string, baseSheetId: number, times: number): string {
+  return `easysmarky:archive:${studentCode}:${baseSheetId}:${times}`;
+}
+
+/**
+ * 古い下書きを、上書きされる前に退避する。退避先が既にあれば残す(最初の古い下書きを優先する)。
+ * 退避できなければ false。呼び出し側は、退避できないうちは下書きを上書きしない。
+ */
+export function archiveBackupOnce(studentCode: string, baseSheetId: number, times: number): boolean {
+  try {
+    const current = localStorage.getItem(backupKey(studentCode, baseSheetId, times));
+    if (current === null) return true; // 退避するものが無い
+    const key = archiveKey(studentCode, baseSheetId, times);
+    if (localStorage.getItem(key) === null) localStorage.setItem(key, current);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearArchive(studentCode: string, baseSheetId: number, times: number): void {
+  try {
+    localStorage.removeItem(archiveKey(studentCode, baseSheetId, times));
+  } catch {
+    // 消せなくても実害は無い
+  }
+}
+
 /**
  * 一覧に出す進捗の元データ。
  * 一覧APIは設問を返さないため、一度開いた回の要約をここに残しておき、次からの一覧に出す。
