@@ -1,5 +1,6 @@
 import { AnswerType, type BaseSheetField } from "../api/types";
 import { defaultAnswerTextValues, firstAnswerText } from "./answerText";
+import { loadPrefs } from "../storage/prefs";
 
 export interface EditableField {
   raw: BaseSheetField;
@@ -42,6 +43,8 @@ export function createEditableField(raw: BaseSheetField): EditableField {
   const primary = firstAnswerText(texts);
   const defaults = defaultAnswerTextValues();
   const choices = normalizeChoices(raw.choice_texts);
+  // 答えの無いテキスト設問だけ、手動で選んだ書字方向を既定値にする(選択式は向きを持たない)
+  const remembered = raw.answer_type === AnswerType.Text ? loadPrefs().direction : null;
 
   return {
     raw,
@@ -51,7 +54,7 @@ export function createEditableField(raw: BaseSheetField): EditableField {
     choiceEdited: false,
     hasExtraStamps: texts.length > 1,
     text: primary?.text ?? "",
-    direction: primary?.direction ?? defaults.direction,
+    direction: primary?.direction ?? remembered ?? defaults.direction,
     fontSize: primary?.font_size ?? defaults.fontSize,
     lineHeight: primary?.line_height ?? defaults.lineHeight,
     color: primary?.color ?? defaults.color,

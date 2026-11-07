@@ -2,6 +2,7 @@ import { AnswerType, Direction } from "../api/types";
 import { isEditableField, type EditableField } from "../model/field";
 import { layoutAnswerText } from "../render/answerLayout";
 import { measureText } from "../render/measure";
+import { updatePrefs } from "../storage/prefs";
 import { drawCropPreview, type CropRect } from "./cropPreview";
 
 export interface FieldEditorOptions {
@@ -478,14 +479,17 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   refreshFit();
 
   // 今の向きを押し直しただけなら変更ではない(未保存の表示や離脱の確認を誤って出さないため)
+  // 手動で選んだときだけ端末に覚える(答えの無い設問の既定値になる)。押し直しは覚えない
   horizBtn.addEventListener("click", () => {
     if (field.direction === Direction.Horizon) return;
     field.direction = Direction.Horizon;
+    updatePrefs({ direction: Direction.Horizon });
     onEdited();
   });
   vertBtn.addEventListener("click", () => {
     if (field.direction === Direction.Vertical) return;
     field.direction = Direction.Vertical;
+    updatePrefs({ direction: Direction.Vertical });
     onEdited();
   });
   textarea.addEventListener("input", () => {
