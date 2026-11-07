@@ -30,10 +30,12 @@ export function fingerprintField(raw: BaseSheetField): string {
 
 /**
  * 今の入力を送ったときに、その設問がサーバーに残す答えの指紋。
- * 編集できる設問は入力した1つのテキストだけになる。編集できない設問は、読み込み時の内容をそのまま送り返す。
+ * 編集できる設問は入力した1つのテキストと、送り返す画像のメタデータ(件数)になる。
+ * canvas は送り返す値に含まれないため、ここでは数えない(サーバーがどう扱うかは実機で未確認)。
+ * 編集できない設問は、読み込み時の内容をそのまま送り返すので、呼び出し側は raw の指紋を使う。
  */
-export function fingerprintSent(text: string): string {
-  return fingerprint([normalizeText(text)], 0, false);
+export function fingerprintSent(text: string, imageCount = 0): string {
+  return fingerprint([normalizeText(text)], imageCount, false);
 }
 
 /** 設問ID → 指紋 の対応 */
@@ -72,7 +74,12 @@ export function findConflicts(
  * 件数だけだと、キャンバスへの筆跡の追加や画像の差し替え(件数が同じ)を取りこぼすため。
  */
 export interface BinarySnapshot {
-  /** 画像の印。id のある画像は "id:<id>"、id の無い画像は "anon:<順番>"(null を1つにまとめると増えても見逃すため) */
+  /**
+   * 画像の印。id のある画像は "id:<id>"。id の無い画像は "anon:<順番>:<位置と大きさ>"
+   * (null を1つにまとめると増えても見逃すため。位置と大きさを足すと、同じ件数での差し替えも見分けられる)。
+   * 注意: id の無い画像は、サーバーが位置・大きさを正規化して返すと、保存のたびに「変わった」と判定されうる。
+   * その場合は次の保存が止まる(送らない側に倒れる)。手書きを消す方向には倒れない。
+   */
   imageIds: ReadonlySet<string>;
   canvas: string | null;
 }
@@ -83,7 +90,7 @@ export function binarySnapshotOf(raw: BaseSheetField): BinarySnapshot | null {
   let anon = 0;
   for (const img of raw.answer_images ?? []) {
     if (img.id != null) imageIds.add(`id:${img.id}`);
-    else imageIds.add(`anon:${anon++}`);
+    else imageIds.add(`anon:${anon++}:${img.x}:${img.y}:${img.width}:${img.height}`);
   }
   const canvas = raw.base64_canvas ?? null;
   if (imageIds.size === 0 && !canvas) return null;
@@ -103,6 +110,28 @@ export function binarySnapshotsOf(fields: BaseSheetField[]): Map<number, BinaryS
 /** シート全体の手書き・画像の件数(画像の件数 + canvas の有無)。保存前後の表示に使う */
 export function totalBinaryCount(fields: BaseSheetField[]): number {
   return fields.reduce((sum, f) => sum + (f.answer_images?.length ?? 0) + (f.base64_canvas ? 1 : 0), 0);
+}
+
+/**
+ * 保存の送信の間(保存直前の再取得〜保存後の再取得)に、手書き・画像が増えた設問のID。
+ * 送信そのものが、id の無い画像に新しい id を振る・座標を正規化するなどして印を変えうるため、
+ * 印の比較は使わず、画像の件数が増えたことと、canvas が新しく現れたことだけを見る。
+ * 件数が同じままの差し替えや、既存 canvas の書き換えは、ここでは見分けられない(送信の間に限った限界)。
+ */
+export function binaryGrownDuringSendIds(
+  post: BaseSheetField[],
+  atSend: ReadonlyMap<number, BinarySnapshot>,
+): number[] {
+  const ids: number[] = [];
+  for (const f of post) {
+    const now = binarySnapshotOf(f);
+    if (!now) continue;
+    const then = atSend.get(f.id);
+    const newImage = now.imageIds.size > (then?.imageIds.size ?? 0);
+    const canvasAppeared = now.canvas !== null && (then?.canvas ?? null) === null;
+    if (newImage || canvasAppeared) ids.push(f.id);
+  }
+  return ids;
 }
 
 /**

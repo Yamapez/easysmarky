@@ -307,6 +307,12 @@ window.fetch = async (input, init) => {
     }
     POST_LOG.push(entry);
     getAfterPost = true;
+    // 送信の間に他所で変わったことを再現する(保存後の再取得より前に実行される)。1回だけ使い、使ったら外す
+    if (window.__esAfterPostHook) {
+      const hook = window.__esAfterPostHook;
+      window.__esAfterPostHook = null;
+      hook();
+    }
     return json({ ok: true });
   }
 

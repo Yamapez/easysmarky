@@ -6,7 +6,7 @@ import { applyGridStyle } from "../model/gridLayout";
 import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../model/sheetGeometry";
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
-import { binarySnapshotsOf, fingerprintSent, fingerprintsOf, normalizeText } from "../save/conflict";
+import { binarySnapshotsOf, fingerprintSent, fingerprintsOf, normalizeText, totalBinaryCount } from "../save/conflict";
 import {
   archiveBackup,
   backupKey,
@@ -129,6 +129,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   const guard = checkSaveGuard(fields);
   // 読み込み時点の手書き・画像の中身。同意のあとに増えた(または変わった)分は送らない判定に使う
   let consentedBinary = binarySnapshotsOf(report.base_sheet_fields);
+  // サーバーに今、手書き・画像があるか(最後に確かめた値)。同意の基準(consentedBinary)とは別に持つ。
+  // 同意の基準は送信の間に増えた設問を外すことがあるが、サーバーの手書きが消えたわけではないため
+  let serverHasBinary = totalBinaryCount(report.base_sheet_fields) > 0;
   // 設定の許可のキャッシュ。入力のたびに localStorage を読まないよう、設定の変更のときだけ読み直す
   let binaryAllowed = loadPrefs().allowBinaryLoss;
 
@@ -495,7 +498,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       rules: SUMMARY_RULES,
       total: editableCount,
       filled: fields.filter(isFilledField).length,
-      blocked: isSaveLocked(),
+      // 手書き・画像があるか(設定に関わらない値)。一覧は、これと端末の設定を合わせて「保存不可」を出す
+      hasBinary: serverHasBinary,
       savedAt,
     });
   }
@@ -561,13 +565,37 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     if (isSaveLocked()) {
       // 保存できないのに「下書き保存してください」と出さないよう、理由を先に出す
       setSaveStatus("手書き・画像のある回は保存できません(右上の「設定」で許可できます)", "#a02622");
-    } else if (dirty) {
-      setSaveStatus("未保存の変更があります。下書き保存してください。", "#8a5a00");
-    } else if (serverSavedAt != null) {
-      setSaveStatus(`保存済み ${formatTime(serverSavedAt)}(サーバーで反映を確認しました)`, "#2e7d32");
-    } else {
-      setSaveStatus("", "");
+      return;
     }
+    let text = "";
+    let color = "";
+    if (dirty) {
+      text = "未保存の変更があります。下書き保存してください。";
+      color = "#8a5a00";
+    } else if (serverSavedAt != null) {
+      text = `保存済み ${formatTime(serverSavedAt)}(サーバーで反映を確認しました)`;
+      color = "#2e7d32";
+    }
+    const caution = cautionText();
+    if (caution) {
+      text = text ? `${text} ${caution}` : caution;
+      color = "#8a5a00";
+    }
+    setSaveStatus(text, color);
+  }
+
+  /**
+   * 許可して保存している間、保存すると手書きが消えるおそれを状態表示に1行添える文(警告欄・確認は出さない)。
+   * 手書きがもう無いと分かっているとき、または許可していないときは空。
+   */
+  function cautionText(): string {
+    return binaryAllowed && serverHasBinary ? "手書き・画像のある回です。保存すると消えるおそれがあります。" : "";
+  }
+
+  /** 保存の結果の文に、注意の1行を続ける(結果の文を消さないため) */
+  function withCaution(text: string): string {
+    const caution = cautionText();
+    return caution ? `${text} ${caution}` : text;
   }
 
   /** 自動保存の失敗を、幅によらず見える場所に出す。ヘッダの文字は狭い画面では隠れるため(styles.ts) */
@@ -1036,14 +1064,17 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     saveBtn.disabled = saving || isSaveLocked();
   }
 
-  function showBinaryNote(before: number, after: number | undefined): void {
+  function showBinaryNote(before: number, after: number | undefined, grownDuringSave: number): void {
     binaryNoteEl?.remove();
     const note = document.createElement("div");
     note.className = "es-warning";
-    note.textContent =
+    const counts =
       after === undefined
         ? `手書き・画像の解答: 保存前 ${before} 件。保存後の件数は確かめられませんでした。`
         : `手書き・画像の解答: 保存前 ${before} 件 → 保存後 ${after} 件(サーバーを再取得して数えた件数です)。`;
+    note.textContent = grownDuringSave > 0
+      ? `${counts} 保存の間に手書き・画像が増えた(または変わった)設問が${grownDuringSave}件あります。次の保存は止まります。この画面を閉じて開き直し、内容を確かめてください。`
+      : counts;
     notices.appendChild(note);
     binaryNoteEl = note;
   }
@@ -1078,13 +1109,15 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         if (result.nextBaseline) serverFingerprints = result.nextBaseline;
         // 手書きの基準も、保存後に確かめた内容に合わせる(照合できたときだけ)
         if (result.nextBinary) consentedBinary = result.nextBinary;
+        // 保存後に数えた件数が分かったときだけ更新する(照合できなかったときは、前の値のまま)
+        if (result.binaryAfter !== undefined) serverHasBinary = result.binaryAfter > 0;
         for (const [id, values] of result.sent ?? []) baseValues.set(id, values);
       }
       if (result.conflictFieldIds && result.conflictFieldIds.length > 0) {
         // 他所で変わった設問を、送ると置き換えてしまう。送らずに止め、どうするかを利用者に選ばせる
         dirty = true;
         const count = result.conflictFieldIds.length;
-        setSaveStatus(`保存していません(他所での変更が${count}件あります)`, "#a02622");
+        setSaveStatus(withCaution(`保存していません(他所での変更が${count}件あります)`), "#a02622");
         showSaveNotice(
           `この画面を開いたあとに、サーバー側で内容が変わった設問が${count}件あります。このまま保存すると、その内容が上書きされます。\n内容を確かめて「上書きして保存」するか、この画面を閉じて開き直してください(開き直すと、この端末の下書きを、変わった設問がわかる形で復元できます)。`,
           result.conflictFieldIds,
@@ -1102,14 +1135,14 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
             message += "\n入力内容はこの端末に残っています。";
           }
         }
-        setSaveStatus("保存に失敗しました。", "#a02622");
+        setSaveStatus(withCaution("保存に失敗しました。"), "#a02622");
         showSaveNotice(message, result.binaryGrownFieldIds ?? []);
       } else if (result.mismatchedFieldIds && result.mismatchedFieldIds.length > 0) {
         // 反映が確認できていないので、未保存扱いのまま離脱時に確認を出す。
         // ステータスは短く、詳細と操作はカードに分けて二重表示を避ける
         dirty = true;
         const count = result.mismatchedFieldIds.length;
-        setSaveStatus(`一部の設問の反映を確認できませんでした(${count}件)`, "#a02622");
+        setSaveStatus(withCaution(`一部の設問の反映を確認できませんでした(${count}件)`), "#a02622");
         showSaveNotice(
           `保存はされましたが、一部の設問(${count}件)の反映が確認できませんでした。「該当の設問を見る」から内容を確かめ、公式画面でもご確認ください。`,
           result.mismatchedFieldIds,
@@ -1117,7 +1150,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       } else if (!result.verified) {
         // 送信は通ったが照合できなかった。「確認済み」とは言わず、未確認のまま残す
         dirty = true;
-        setSaveStatus("反映を確認できませんでした。", "#a02622");
+        setSaveStatus(withCaution("反映を確認できませんでした。"), "#a02622");
         showSaveNotice("保存は完了しましたが、サーバーで反映を確認できませんでした。公式画面で内容をご確認ください。", []);
       } else {
         serverSavedAt = Date.now();
@@ -1133,7 +1166,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         }
         refreshSaveState();
       }
-      if (result.ok && result.binaryBefore) showBinaryNote(result.binaryBefore, result.binaryAfter);
+      const grownCount = result.binaryGrownDuringSave ?? 0;
+      if (result.ok && (result.binaryBefore || grownCount > 0)) {
+        showBinaryNote(result.binaryBefore ?? 0, result.binaryAfter, grownCount);
+      }
     } catch {
       const message = "予期せぬエラーが発生しました。通信状況をご確認のうえ再度お試しください。";
       setSaveStatus(message, "#a02622");
@@ -1152,8 +1188,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   // 画面が捨てられていれば何もしない(次に開いた画面が差し替える)
   refreshActiveForm = () => {
     if (!form.isConnected) return;
-    binaryAllowed = loadPrefs().allowBinaryLoss;
-    if (guard.blocked) persistSummary(Date.now());
+    const next = loadPrefs().allowBinaryLoss;
+    // 手書きの許可が変わったときだけ直す。ズームや書字方向の変更で、保存の失敗・競合の表示を上書きしない
+    if (next === binaryAllowed) return;
+    binaryAllowed = next;
     // 送信中は状態表示(保存中...)を上書きしない。送信が終われば、そのときの表示になる
     if (!saving) refreshSaveState();
     refreshSaveButton();

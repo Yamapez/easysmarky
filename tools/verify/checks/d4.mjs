@@ -376,4 +376,59 @@ export async function run(ctx) {
   await sleep(300);
   const allowedRow = await ev(`${sel(".es-list-item")}?.textContent ?? ""`);
   check("D4 許可したあと一覧に戻ると、同じ回は「保存不可」と出ない", !allowedRow.includes("保存不可"), allowedRow);
+
+  // ================================================================ H. 許可のあとの注意・送信の間の増加・設定の変更で保存状態を上書きしない
+  // H1: 許可して保存している間、手書きが残っていれば状態表示に1行出す。警告欄には出さない
+  await openFresh("d4binaryOn");
+  await openSheet();
+  check("D4 許可して手書きがある回は、状態表示に「保存すると消えるおそれ」を1行出す(警告欄には出さない)",
+    (await statusNow()).includes("保存すると消えるおそれ") && !(await warnings()).includes("保存すると消えるおそれ"),
+    { status: await statusNow(), warnings: await warnings() });
+
+  // H2: 保存の失敗の表示のあとに、設定の変更(別タブ・ズームなど)が届いても、失敗の表示を書き換えない
+  await openFresh("d4binaryOn");
+  await openSheet();
+  await ev(`window.__esFail.saveNetwork = true, true`);
+  await clickSave();
+  await until(`(${sel(".es-save-status")}?.textContent || "").includes("保存に失敗")`);
+  await ev(`window.dispatchEvent(new StorageEvent("storage", { key: "easysmarky:prefs" })), true`);
+  await sleep(200);
+  check("D4 設定の無関係な変更で、保存の失敗の表示を「未保存の変更」に書き換えない",
+    (await statusNow()).includes("保存に失敗") && !(await statusNow()).includes("未保存の変更"), await statusNow());
+
+  // H3: 保存の送信の間(POST と保存後の再取得の間)に手書きが増えたら、その保存は成功でも、次の保存は送らず止まる
+  await openFresh("d4binaryOn");
+  await openSheet();
+  await ev(`window.__esAfterPostHook = () => window.__esServerAddImage(3, 9002), true`);
+  const beforeInFlight = await postCount();
+  await clickSave();
+  check("D4 送信の間に増えた手書きがあっても、送った保存そのものは通り、件数の下に増えたことを出す",
+    (await postCount()) === beforeInFlight + 1 && (await warnings()).includes("保存の間に手書き・画像が増えた"),
+    { posts: await postCount(), beforeInFlight, warnings: await warnings() });
+  const beforeSecond = await postCount();
+  await clickSave();
+  await until(`(${sel(".es-save-status")}?.textContent || "").includes("保存に失敗")`);
+  check("D4 送信の間に増えた手書きは次の保存の基準に入らず、次の保存は送らずに開き直しを求める",
+    (await postCount()) === beforeSecond && (await errorText()).includes("開き直"),
+    { posts: await postCount(), beforeSecond, err: await errorText() });
+
+  // H5: 手書きが1設問だけの回で、その設問が送信の間に増えても、保存後もサーバーに手書きが残るので注意は消えない
+  await openFresh("d4binaryOn");
+  await ev(`window.__esServerSetCanvas(2, null), true`);
+  await openSheet();
+  await ev(`window.__esAfterPostHook = () => window.__esServerAddImage(3, 9002), true`);
+  await clickSave();
+  check("D4 手書きが1設問だけの回で送信の間に増えても、保存後の状態表示に「保存すると消えるおそれ」が残る",
+    (await statusNow()).includes("保存すると消えるおそれ"), await statusNow());
+
+  // H4: 読み込みの時点では手書きが無く、設定で許可済みの後で手書きが増えた回は、設定の案内ではなく開き直しを案内する
+  await openFresh("d4");
+  await ev(`localStorage.setItem("easysmarky:prefs", JSON.stringify({ v: 1, zoom: null, direction: null, allowBinaryLoss: true })), true`);
+  await openSheet();
+  await ev(`window.__esServerHandwrite(3), true`);
+  await clickSave();
+  await until(`(${sel(".es-save-status")}?.textContent || "").includes("保存に失敗")`);
+  const errH4 = await errorText();
+  check("D4 設定で許可済みなのに止まったときは、設定でなく開き直しを案内する",
+    errH4.includes("開き直") && !errH4.includes("設定"), errH4);
 }

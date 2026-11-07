@@ -132,6 +132,61 @@ async function screenshot(send, name) {
   await writeFile(join(OUT_DIR, name), Buffer.from(data, "base64"));
 }
 
+// ---------------------------------------------------------------- 設定ダイアログ
+// 「設定」を実マウス操作で押し、出てきたチェックボックスの中心が本物に当たることを確かめる。
+// 以前は全画面の .es-root(z-index 2147483000)の下に設定ダイアログ(z-index 100)が隠れ、
+// 押しても何も起きなかった。押せたうえで、変更が端末の設定(easysmarky:prefs)に残ることも見る。
+// 変えた設定は元に戻す(後続のシナリオが保存の既定値を前提にしているため)。
+// 実マウス操作は、未保存の入力があるページで走らせないこと。ページがユーザー操作を得て、
+// 離脱の確認(beforeunload)が次の Page.navigate を止める(README の注意点を参照)。
+async function assertSettingsClickable(send, label) {
+  const clickAt = async (x, y) => {
+    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+      await send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    }
+  };
+  const SHADOW = `document.getElementById("easysmarky-host").shadowRoot`;
+  const btn = await evalJs(
+    send,
+    `(() => { const b = [...${SHADOW}.querySelectorAll("button")].find((x) => x.textContent === "設定"); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+    false,
+  );
+  if (!btn) {
+    check(`${label}: ヘッダに「設定」がある`, false);
+    return;
+  }
+  await clickAt(btn.x, btn.y);
+  await sleep(200);
+  const cbInfo = `(() => { const cb = ${SHADOW}.querySelector(".es-settings input[type=checkbox]"); if (!cb) return null; const r = cb.getBoundingClientRect(); const x = r.x + r.width / 2; const y = r.y + r.height / 2; return { x, y, hit: ${SHADOW}.elementFromPoint(x, y) === cb, checked: cb.checked }; })()`;
+  const before = await evalJs(send, cbInfo, false);
+  check(
+    `${label}: 「設定」を押すと、チェックボックスが押せる位置に出る`,
+    !!before && before.hit,
+    before ? "" : "設定ダイアログが無い",
+  );
+  if (!before?.hit) return;
+
+  await clickAt(before.x, before.y);
+  await sleep(100);
+  const after = await evalJs(send, cbInfo, false);
+  const stored = await evalJs(
+    send,
+    `(() => { try { return JSON.parse(localStorage.getItem("easysmarky:prefs") || "null")?.allowBinaryLoss ?? null; } catch { return "error"; } })()`,
+    false,
+  );
+  check(
+    `${label}: チェックを押すと切り替わり、端末の設定に残る`,
+    after && after.checked !== before.checked && stored === after.checked,
+    `before=${before.checked} after=${after?.checked} stored=${stored}`,
+  );
+
+  // 元に戻す
+  await clickAt(before.x, before.y);
+  await sleep(100);
+  const restored = await evalJs(send, cbInfo, false);
+  check(`${label}: 設定を元の状態に戻せる`, restored && restored.checked === before.checked);
+}
+
 // ---------------------------------------------------------------- アサーション
 const checks = [];
 function check(name, ok, detail) {
@@ -746,6 +801,9 @@ try {
 
   for (const [label, w, h] of [["スマホ(430px)", 430, 900], ["PC(1400px)", 1400, 900]]) {
     await setViewport(send, w, h);
+    // 設定の押下は、何も触っていない一覧の状態で確かめる(前の検査の画面の状態に左右されないように)
+    await openHarness(send, URL_HARNESS);
+    await assertSettingsClickable(send, label);
     await openHarness(send, URL_HARNESS);
     assertAll(label, await evalJs(send, "window.__esAssert()"), w);
     await openHarness(send, URL_HARNESS);
