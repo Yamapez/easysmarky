@@ -15,6 +15,8 @@
     },
   });
 
+  // 設定なし(従来どおり)。?scenario=d1 のときに空の設定として読まれる
+  window.__esScenarios.d1 = {};
   // 一覧から開く前に、この端末に下書きが残っている状態
   window.__esScenarios.d1restore = { seedStorage: { [DRAFT_KEY]: draft(Date.now() - 60 * 60 * 1000) } };
   // 保存後照合の不一致を3件作る(2・3・5 を REPORT に書き戻さない)

@@ -11,7 +11,7 @@ const DRAFT_KEY = "easysmarky:2025HF249:1001:1";
 const sel = (s) => `${HOST}.querySelector(${JSON.stringify(s)})`;
 
 export async function run(ctx) {
-  const { send, evalJs, setViewport, openHarness, check, URL_HARNESS, sleep } = ctx;
+  const { send, evalJs, setViewport, openHarness, check, URL_HARNESS, sleep, screenshot } = ctx;
   const ev = (expr) => evalJs(send, expr);
   const text = async (s) => (await ev(`${sel(s)}?.textContent ?? null`)) ?? "";
 
@@ -79,6 +79,15 @@ export async function run(ctx) {
   const startFail = { text: await text(".es-autosave"), failed: await ev(`${sel(".es-autosave")}.classList.contains("failed")`) };
   check("D1 起動直後に書けなければ、自動保存の失敗を警告する",
     startFail.failed === true && startFail.text.includes("自動保存できません"), startFail);
+  // 狭い画面ではヘッダの文字が隠れるので、お知らせ欄の警告で伝わることを見る
+  const bannerOn = () => ev(`[...${HOST}.querySelectorAll(".es-warning")].some((x) => x.textContent.includes("自動保存できていません"))`);
+  check("D1 自動保存できないときは、幅によらず見えるお知らせを出す", (await bannerOn()) === true, null);
+  // スマホ幅でも警告が崩れないことを、目で見られるように1枚残す
+  await setViewport(send, 430, 900);
+  await sleep(300);
+  await screenshot(send, "d1-autosave-failed-mobile.png");
+  await setViewport(send, 1400, 900);
+  await sleep(200);
 
   await setText("失敗中の入力");
   await sleep(800); // 自動保存は 500ms の遅延のあとに書かれる
@@ -94,6 +103,15 @@ export async function run(ctx) {
     leaveFail.includes("自動保存にも失敗") && !leaveFail.includes("自動保存されていますが"), leaveFail);
   check("D1 確認でやめたら、画面に留まる", (await ev(`!!${sel(".es-form")}`)) === true, null);
 
+  // 保存も通信で落ちているときは、画面を閉じないよう促す(入力はこの端末に残っていないため)
+  await ev(`window.__esFail.saveNetwork = true, true`);
+  await clickSave();
+  await until(`${sel(".es-save-status")}.textContent.includes("保存に失敗")`, 8000);
+  await sleep(200);
+  const failNotice = await text(".es-error");
+  check("D1 自動保存もできていないときは、保存失敗の案内でも画面を閉じないよう促す",
+    failNotice.includes("画面を閉じないでください") && !failNotice.includes("残っています"), failNotice);
+
   // 書き込みが戻ったら、次の入力で警告が消え、時刻が出る
   await ev(`(() => { if (window.__d1OrigSetItem) Storage.prototype.setItem = window.__d1OrigSetItem; return true; })()`);
   await setText("回復後の入力");
@@ -102,6 +120,7 @@ export async function run(ctx) {
     3000,
   );
   check("D1 書けるようになると、次の自動保存で警告が消え時刻が出る", recovered === true, await text(".es-autosave"));
+  check("D1 書けるようになると、お知らせの警告も消える", (await bannerOn()) === false, null);
   await stubConfirm(false);
   await ev(`${sel(".es-header-back")}.click(), true`);
   await sleep(150);
@@ -140,6 +159,7 @@ export async function run(ctx) {
   const undoneA = await fieldText();
   check("D1 元に戻すと、復元前の内容に戻る(全設問)",
     undoneB === "" && undoneA === "既存の下書きテキスト", { undoneB, undoneA });
+  await sleep(700); // 自動保存(500ms の遅延)が遅れて書かれていないことを確かめてから読む
   const stored = await storedDraft();
   check("D1 元に戻しても、この端末の下書きは書き換えない",
     stored !== null && JSON.parse(stored).fields["1"].text === "復元した下書きア", stored);
@@ -173,6 +193,22 @@ export async function run(ctx) {
   await sleep(200);
   check("D1 確認で了承すると、下書きと選択肢が消える",
     (await storedDraft()) === null && !(await hasButton("破棄する")), null);
+
+  // 復元の前に打ってから破棄すると、自動保存が古い下書きの代わりに書いた今の入力も消える。
+  // その場合は今の入力を書き直し、「自動保存されている」と言ったことを事実にする
+  await openHarness(send, `${URL_HARNESS}?scenario=d1restore`);
+  await openSheet();
+  await sleep(300);
+  await setText("破棄の前に打った文");
+  await sleep(700); // 自動保存が、古い下書きの上に今の入力を書く
+  await stubConfirm(true);
+  await clickButton("破棄する");
+  await sleep(200);
+  const afterDiscardTyped = await storedDraft();
+  check("D1 入力のあとに破棄しても、今の入力は残る(古い下書きだけが消える)",
+    afterDiscardTyped !== null && JSON.parse(afterDiscardTyped).fields["1"].text === "破棄の前に打った文" &&
+    !(await text(".es-autosave")).includes("自動保存できません"),
+    { stored: afterDiscardTyped, autosave: await text(".es-autosave") });
 
   // ================================================================ D. 保存後照合の不一致が3件
   await openHarness(send, `${URL_HARNESS}?scenario=d1mismatch`);

@@ -441,7 +441,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     });
   }
 
-  const persistBackup = debounce(() => {
+  /** 今の入力をこの端末に書く。すぐ書きたいとき(破棄の直後など)はこれを直接呼ぶ */
+  function persistNow(): void {
     const at = Date.now();
     const ok = saveBackup(sheet.studentCode, sheet.baseSheetId, sheet.times, collectBackup(), at);
     persistSummary(at);
@@ -449,7 +450,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     // 書けたときだけ時刻を進める。失敗した時刻を「自動保存 hh:mm」と出すと、残っていると誤解させる
     if (ok) lastSavedAt = at;
     refreshStatusText();
-  }, 500);
+  }
+
+  const persistBackup = debounce(persistNow, 500);
 
   // 開いただけでも一覧に進捗が出るよう、初回は即座に要約を残す。
   // 下書きはここでは書かない(既存の下書きを、復元するか決める前に空の値で上書きしてしまうため)。
@@ -492,7 +495,24 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     }
   }
 
+  /** 自動保存の失敗を、幅によらず見える場所に出す。ヘッダの文字は狭い画面では隠れるため(styles.ts) */
+  let autosaveWarnEl: HTMLElement | null = null;
+  function refreshAutosaveWarning(): void {
+    if (backupFailed && !autosaveWarnEl) {
+      const bar = document.createElement("div");
+      bar.className = "es-warning";
+      bar.textContent =
+        "この端末に自動保存できていません(容量・設定を確認してください)。画面を閉じる前に、下書き保存してください。";
+      notices.insertBefore(bar, notices.firstChild);
+      autosaveWarnEl = bar;
+    } else if (!backupFailed && autosaveWarnEl) {
+      autosaveWarnEl.remove();
+      autosaveWarnEl = null;
+    }
+  }
+
   function refreshStatusText(): void {
+    refreshAutosaveWarning();
     if (backupFailed) {
       autosaveEl.textContent = "この端末に自動保存できません(容量・設定を確認)";
       autosaveEl.classList.add("failed");
@@ -697,6 +717,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       if (!window.confirm("この端末に保存された下書きを破棄します。\n破棄すると元に戻せません。よろしいですか?")) return;
       clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
       removeRestoreBar();
+      // 復元の前に打った分は、自動保存が古い下書きの代わりに書いている。それも消えているので、今の入力を書き直す
+      if (dirty) persistNow();
     });
     notices.appendChild(bar);
     restoreBarEl = bar;
