@@ -230,8 +230,8 @@ function assertAll(label, r, viewportWidth) {
   check(`${label}: テキストのみ(answer_type:3)の設問は編集できる`,
     s.autoPan.editable === true, s.autoPan);
 
-  // --- Ctrl+↵ は編集不可の設問を飛ばす ---
-  check(`${label}: Ctrl+↵ は編集不可の設問(エ)を飛ばす`,
+  // --- Shift+↵ は編集不可の設問を飛ばす ---
+  check(`${label}: Shift+↵ は編集不可の設問(エ)を飛ばす`,
     s.skipLocked.before.includes("イ") && s.skipLocked.after.includes("ウ") &&
     s.skipLocked.after !== s.skipLocked.before,
     s.skipLocked);
@@ -406,8 +406,25 @@ function assertAll(label, r, viewportWidth) {
       s.choiceBlankSave.stamps[0].height === 1 && (s.choiceBlankSave.status || "").includes("反映を確認"),
       s.choiceBlankSave);
   }
-  check(`${label}: Ctrl+↵ で次の設問に移る`,
+  check(`${label}: Shift+↵ で次の設問に移る`,
     s.shortcut.after !== s.shortcut.before && s.shortcut.after.length > 0, s.shortcut);
+  check(`${label}: Cmd+→ で次の設問、Cmd+← で前の設問に戻る(往復して元に戻る)`,
+    s.cmdArrow.afterRight !== s.cmdArrow.before && s.cmdArrow.afterLeft === s.cmdArrow.before,
+    s.cmdArrow);
+  check(`${label}: Cmd+D で横書き⇔縦書きが切り替わり、二度押しで元に戻る`,
+    s.cmdDirection.isText === true && !!s.cmdDirection.before &&
+    s.cmdDirection.after !== s.cmdDirection.before && s.cmdDirection.restored === s.cmdDirection.before,
+    s.cmdDirection);
+  check(`${label}: 変換中(IME)の Shift+↵ は設問を動かさない`,
+    s.composingShiftEnter.before.length > 0 && s.composingShiftEnter.after === s.composingShiftEnter.before,
+    s.composingShiftEnter);
+  check(`${label}: 選択式では Cmd+D で向きを変えず、変えられないと告げる`,
+    s.cmdDirectionChoice.choiceShown === true && s.cmdDirectionChoice.toggleShown === false &&
+    (s.cmdDirectionChoice.toastText || "").includes("変えられません"),
+    s.cmdDirectionChoice);
+  check(`${label}: Cmd+↑↓ でページが送られ、戻せる`,
+    !!s.cmdPage.before && s.cmdPage.afterUp !== s.cmdPage.before && s.cmdPage.afterDown === s.cmdPage.before,
+    s.cmdPage);
 
   // --- 「次の未入力へ」を辿りきると先頭へ巻き戻り、告知する ---
   check(`${label}: 未入力を辿りきると巻き戻ってトーストで告知する`,
@@ -586,10 +603,10 @@ async function assertReader(send, label, viewportWidth) {
       mainBefore,
       focusOnOpen: !!root.activeElement?.closest(".es-reader"),
     };
-    // 読むモード中の編集系キー(Ctrl+↵)が裏の入力欄へ移らないこと
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    // 読むモード中の編集系キー(Shift+↵)が裏の入力欄へ移らないこと
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
     await wait(50);
-    out.focusAfterCtrlEnter = !!root.activeElement?.closest(".es-reader");
+    out.focusAfterShiftEnter = !!root.activeElement?.closest(".es-reader");
 
     // 画像の読み込みを待ってから、選んでいる枠の中心が読むモードの見える範囲に入るかを見る
     const readerImg = reader ? reader.querySelector(".es-viewer-img") : null;
@@ -634,6 +651,14 @@ async function assertReader(send, label, viewportWidth) {
     out.focusRestoredAfterEsc = root.activeElement === readBtn;
     out.hostVisibleAfterEsc = host.style.display !== "none";
     out.mainAfterEsc = snapshot(pane);
+    // 対照: 読むモードを閉じたあとは同じキーで次の設問へ移る。上の「移らない」が、キーが効かないだけの見かけ上の合格ではないことを確かめる
+    const nameBeforeControl = (root.querySelector(".es-editor-name")?.textContent || "").trim();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+    await wait(50);
+    out.shiftEnterAfterClose = {
+      before: nameBeforeControl,
+      after: (root.querySelector(".es-editor-name")?.textContent || "").trim(),
+    };
 
     // 選んでいる枠が、読むモードの画像上で見える範囲に入っているか(窓表示でも全体表示でも同じ換算で測る)
     const probeVisible = () => {
@@ -689,8 +714,10 @@ async function assertReader(send, label, viewportWidth) {
     r.hadActive === true && r.focusVisible === true, { hadActive: r.hadActive, focusVisible: r.focusVisible });
   check(`${label}: 読むモードを開くと閉じるボタンに移り、閉じると読む前のボタンに戻る`,
     r.focusOnOpen === true && r.focusRestoredAfterEsc === true, { focusOnOpen: r.focusOnOpen, restored: r.focusRestoredAfterEsc });
-  check(`${label}: 読むモード中は Ctrl+↵ で裏の入力欄へ移らない`,
-    r.focusAfterCtrlEnter === true, r.focusAfterCtrlEnter);
+  check(`${label}: 読むモード中は Shift+↵ で裏の入力欄へ移らない`,
+    r.focusAfterShiftEnter === true, r.focusAfterShiftEnter);
+  check(`${label}: 読むモードを閉じると Shift+↵ で次の設問へ移る(対照)`,
+    r.shiftEnterAfterClose.after !== r.shiftEnterAfterClose.before, r.shiftEnterAfterClose);
   check(`${label}: 読むモードの Esc は読むモードだけを閉じる`,
     r.closedByEsc === true && r.hostVisibleAfterEsc === true, r);
   check(`${label}: 読むモードを閉じても上のビューアのズームとページは変わらない`,
@@ -730,7 +757,7 @@ try {
   // シナリオ別の検査。各担当は tools/verify/checks/dN.mjs の run() に書く
   // (設定は harness-dN.js の window.__esScenarios.dN、読み込みは ?scenario=dN)
   const scenarioCtx = { send, evalJs, setViewport, openHarness, check, URL_HARNESS, sleep, screenshot };
-  for (const name of ["d1", "d2", "d3"]) {
+  for (const name of ["d1", "d2", "d3", "d4"]) {
     const mod = await import(`./checks/${name}.mjs`);
     await mod.run(scenarioCtx);
   }

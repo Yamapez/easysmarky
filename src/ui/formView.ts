@@ -6,8 +6,11 @@ import { applyGridStyle } from "../model/gridLayout";
 import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../model/sheetGeometry";
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
+import { fingerprintSent, fingerprintsOf, normalizeText } from "../save/conflict";
 import {
   archiveBackup,
+  backupKey,
+  changedFromBase,
   clearArchive,
   clearBackup,
   debounce,
@@ -15,6 +18,7 @@ import {
   saveBackup,
   saveSheetSummary,
   SUMMARY_RULES,
+  type FieldValues,
   type LoadedBackup,
   type SheetBackup,
 } from "../storage/backup";
@@ -31,6 +35,7 @@ import {
   type RimFieldInfo,
 } from "./pageViewer";
 import { createQuestionStrip, type StripItem } from "./questionStrip";
+import { isCmdKey } from "./platform";
 import type { SelectedSheet } from "./sheetPicker";
 
 export interface FormViewOptions {
@@ -46,6 +51,30 @@ function isFilledField(field: EditableField): boolean {
 /** easysmarkyで入力できる設問か(進捗の分母になる) */
 function isEditable(field: EditableField): boolean {
   return isEditableField(field);
+}
+
+/** 設問の編集できる値。下書きの base(サーバーが持っていた値)として使う */
+function valuesOf(field: EditableField): FieldValues {
+  return {
+    text: field.text,
+    direction: field.direction,
+    fontSize: field.fontSize,
+    lineHeight: field.lineHeight,
+    color: field.color,
+  };
+}
+
+/** 復元する設問の決め方。values は戻す設問だけ、conflictIds は戻すが他所でも変わっている設問 */
+interface RestorePlan {
+  values: SheetBackup;
+  conflictIds: number[];
+  legacy: boolean;
+}
+
+/** 保存の基準(下書きの base と、保存直前の比較用の指紋)。復元で差し替え、「元に戻す」で戻す */
+interface Baselines {
+  base: Map<number, FieldValues>;
+  fp: Map<number, string>;
 }
 
 function formatTime(at: number): string {
@@ -103,6 +132,17 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   let editSeq = 0;
   // サーバーでの反映を照合できた最後の時刻
   let serverSavedAt: number | null = null;
+  // 読み込み時点のサーバーの指紋。保存直前の再取得と比べて、他所での変更を見つける(保存が通るたびに更新する)
+  let serverFingerprints = fingerprintsOf(report.base_sheet_fields);
+  // 下書きの base に書く、サーバーが持っている値(編集できる設問ごと)。読み込み時と、保存が通ったときに更新する
+  const baseValues = new Map<number, FieldValues>();
+  // 読み込み直後の表示上のテキスト。復元のとき、サーバーの今の値と base を比べるのに使う
+  const loadedText = new Map<number, string>();
+  for (const f of fields) {
+    if (!isEditable(f)) continue;
+    baseValues.set(f.raw.id, valuesOf(f));
+    loadedText.set(f.raw.id, normalizeText(f.text));
+  }
 
   opts.header.setBack(opts.onBack, "← 科目一覧");
   opts.header.setLeaveGuard(() => {
@@ -428,14 +468,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     const backup: SheetBackup = {};
     for (const f of fields) {
       if (!isEditable(f)) continue;
-      backup[f.raw.id] = {
-        text: f.text,
-        direction: f.direction,
-        fontSize: f.fontSize,
-        lineHeight: f.lineHeight,
-        color: f.color,
-        grid: f.grid,
-      };
+      backup[f.raw.id] = { ...valuesOf(f), base: baseValues.get(f.raw.id), grid: f.grid };
     }
     return backup;
   }
@@ -611,6 +644,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         if (!target) return;
         target.grid = grid;
         applyGridStyle(target);
+        // 文字サイズ・改行はマス目から決まる既定値で、利用者の入力ではない。下書きの基準(base)の書式も合わせ、
+        // 復元のときに「触った」と誤認しないようにする(書字方向は利用者が選ぶものなので触らない)
+        const base = baseValues.get(target.raw.id);
+        if (base) baseValues.set(target.raw.id, { ...base, fontSize: target.fontSize, lineHeight: target.lineHeight });
         viewer.refreshRims();
       },
       onChange: (changed) => {
@@ -730,8 +767,60 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     viewer.refreshRims();
   }
 
+  /** 復元の前の基準を控える。「元に戻す」で、ここへ戻す */
+  function takeBaselines(): Baselines {
+    return { base: new Map(baseValues), fp: new Map(serverFingerprints) };
+  }
+
+  function restoreBaselines(prior: Baselines): void {
+    baseValues.clear();
+    for (const [id, values] of prior.base) baseValues.set(id, values);
+    serverFingerprints = new Map(prior.fp);
+  }
+
+  /**
+   * 復元した設問は、下書きに残っていた base(書いた時点のサーバーの値)を基準にする。
+   * 他所で変わった設問は、この基準との差として保存時に止まり、上書きの確認を通すまで送らない。
+   * (復元バナーは最初の編集で消えるので、保存の確認だけが持続する守りになる)
+   */
+  function adoptBaselines(plan: RestorePlan): void {
+    for (const [key, entry] of Object.entries(plan.values)) {
+      if (entry.base) baseValues.set(Number(key), entry.base);
+    }
+    for (const id of plan.conflictIds) {
+      const base = plan.values[id]?.base;
+      if (base) serverFingerprints.set(id, fingerprintSent(base.text));
+    }
+  }
+
+  /**
+   * 下書きのうち、どの設問を戻すかを決める。
+   * base の無い設問(導入前の下書き)は従来どおり全部戻す。base のある設問は、この端末で実際に触ったものだけ戻す
+   * (触っていない設問まで戻すと、他所で保存された内容を古い値で置き換えてしまうため)。
+   * 触った設問でも、サーバーの今の値が base と違えば「他所でも変わっている」として別に知らせる。
+   */
+  function planRestore(saved: SheetBackup): RestorePlan {
+    const values: SheetBackup = {};
+    const conflictIds: number[] = [];
+    let legacy = false;
+    for (const [key, entry] of Object.entries(saved)) {
+      const id = Number(key);
+      if (!entry.base) {
+        legacy = true;
+        values[id] = entry;
+        continue;
+      }
+      if (!changedFromBase(entry)) continue;
+      values[id] = entry;
+      const now = loadedText.get(id);
+      if (now !== undefined && normalizeText(entry.base.text) !== now) conflictIds.push(id);
+    }
+    return { values, conflictIds, legacy };
+  }
+
   function showRestoreOffer(backup: LoadedBackup): void {
     removeRestoreBar();
+    const plan = planRestore(backup.fields);
     const bar = document.createElement("div");
     bar.className = "es-warning";
     const message = document.createElement("div");
@@ -743,6 +832,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     note.textContent = "入力を始めると、古い下書きは退避してから新しい入力を自動保存します。";
     bar.appendChild(note);
     offerNoteEl = note;
+    if (plan.conflictIds.length > 0) {
+      const conflict = document.createElement("div");
+      conflict.textContent = `サーバー側でも内容が変わった設問が${plan.conflictIds.length}件あります。復元する前に確かめてください。`;
+      bar.appendChild(conflict);
+    }
     const actions = document.createElement("div");
     actions.className = "es-warning-actions";
     const restoreBtn = document.createElement("button");
@@ -754,14 +848,23 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     discardBtn.textContent = "破棄する";
     actions.appendChild(restoreBtn);
     actions.appendChild(discardBtn);
+    if (plan.conflictIds.length > 0) actions.appendChild(createJumpButton(plan.conflictIds));
     bar.appendChild(actions);
     restoreBtn.addEventListener("click", () => {
       // 復元で今の入力が消えるので、直前の値を控えてから当てる
       const before = collectBackup();
-      applyValues(backup.fields);
+      if (Object.keys(plan.values).length === 0) {
+        // この端末の下書きは、サーバーの内容から何も変えていなかった。戻すものが無い
+        removeRestoreBar();
+        announce("この端末の下書きに、サーバーの内容と違う入力はありませんでした。");
+        return;
+      }
+      const prior = takeBaselines();
+      applyValues(plan.values);
+      adoptBaselines(plan);
       // 復元した内容を先に下書きへ書く。古い下書きは、上書きの前に退避される(提示がまだ残っている今のうちに)
       persistNow();
-      showRestoredBanner(backup, before);
+      showRestoredBanner(backup, before, plan, prior);
     });
     discardBtn.addEventListener("click", () => {
       // 破棄すると戻せない。離脱ガードと同じく確認を通す
@@ -778,13 +881,26 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     refreshStatusText();
   }
 
-  function showRestoredBanner(backup: LoadedBackup, before: SheetBackup): void {
+  function showRestoredBanner(backup: LoadedBackup, before: SheetBackup, plan: RestorePlan, prior: Baselines): void {
     removeRestoreBar();
     const bar = document.createElement("div");
     bar.className = "es-warning";
     const message = document.createElement("div");
-    message.textContent = "下書きを復元しました。内容を確かめ、問題なければ下書き保存してください。";
+    // 古い形式の下書きは、入力した設問だけを選べないので、従来どおり全部戻したことを言う
+    message.textContent = plan.legacy
+      ? "下書きを復元しました。内容を確かめ、問題なければ下書き保存してください。"
+      : "この端末で入力した内容を復元しました。内容を確かめ、問題なければ下書き保存してください。";
     bar.appendChild(message);
+    if (plan.conflictIds.length > 0) {
+      const conflict = document.createElement("div");
+      conflict.textContent = `サーバー側でも内容が変わった設問が${plan.conflictIds.length}件あります。保存するときに、上書きの確認を出します。`;
+      bar.appendChild(conflict);
+    }
+    if (plan.legacy) {
+      const legacy = document.createElement("div");
+      legacy.textContent = "この下書きは古い形式のため、サーバー側の変更との照合はできていません。";
+      bar.appendChild(legacy);
+    }
     const actions = document.createElement("div");
     actions.className = "es-warning-actions";
     const undoBtn = document.createElement("button");
@@ -792,6 +908,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     undoBtn.textContent = "元に戻す";
     undoBtn.addEventListener("click", () => {
       removeRestoreBar();
+      restoreBaselines(prior);
       applyValues(before);
       // 画面に戻した内容を下書きにも書く。復元の際に書いた分の古い下書きは退避してあるので失われない
       persistNow();
@@ -799,6 +916,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       showRestoreOffer(backup);
     });
     actions.appendChild(undoBtn);
+    if (plan.conflictIds.length > 0) actions.appendChild(createJumpButton(plan.conflictIds));
     bar.appendChild(actions);
     notices.appendChild(bar);
     restoreBarEl = bar;
@@ -847,7 +965,21 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     statusEl.style.color = color;
   }
 
-  function showSaveNotice(message: string, mismatchedIds: number[]): void {
+  /** 他所で変わった設問へ順に移るボタン。押すたびに次の設問へ回る。件数が1つだけのときは位置を出さない */
+  function createJumpButton(ids: number[]): HTMLButtonElement {
+    const jumpBtn = document.createElement("button");
+    jumpBtn.type = "button";
+    let cursor = -1;
+    jumpBtn.textContent = "該当の設問を見る";
+    jumpBtn.addEventListener("click", () => {
+      cursor = (cursor + 1) % ids.length;
+      focusField(ids[cursor], { focusInput: true });
+      jumpBtn.textContent = ids.length > 1 ? `該当の設問を見る (${cursor + 1}/${ids.length})` : "該当の設問を見る";
+    });
+    return jumpBtn;
+  }
+
+  function showSaveNotice(message: string, ids: number[], conflict = false): void {
     saveNotice?.remove();
     const card = document.createElement("div");
     card.className = "es-error";
@@ -858,28 +990,25 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     const actions = document.createElement("div");
     actions.className = "es-save-actions";
     actions.style.marginTop = "10px";
-    if (mismatchedIds.length > 0) {
-      const jumpBtn = document.createElement("button");
-      jumpBtn.type = "button";
-      // 押すたびに次の不一致の設問へ回る。件数が1つだけのときは位置を出さない
-      let cursor = -1;
-      jumpBtn.textContent = "該当の設問を見る";
-      jumpBtn.addEventListener("click", () => {
-        cursor = (cursor + 1) % mismatchedIds.length;
-        focusField(mismatchedIds[cursor], { focusInput: true });
-        jumpBtn.textContent =
-          mismatchedIds.length > 1
-            ? `該当の設問を見る (${cursor + 1}/${mismatchedIds.length})`
-            : "該当の設問を見る";
+    if (ids.length > 0) actions.appendChild(createJumpButton(ids));
+    if (conflict) {
+      // 他所の内容を置き換える操作は、確認を通してからだけ行う
+      const overwriteBtn = document.createElement("button");
+      overwriteBtn.type = "button";
+      overwriteBtn.textContent = "上書きして保存";
+      overwriteBtn.addEventListener("click", () => {
+        if (!window.confirm("サーバー側で内容が変わった設問を、この画面の内容で上書きします。\n上書きすると、他所での内容は元に戻せません。よろしいですか?")) return;
+        void runSave({ overwrite: true });
       });
-      actions.appendChild(jumpBtn);
+      actions.appendChild(overwriteBtn);
+    } else {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "secondary";
+      retryBtn.textContent = "もう一度保存";
+      retryBtn.addEventListener("click", () => void runSave());
+      actions.appendChild(retryBtn);
     }
-    const retryBtn = document.createElement("button");
-    retryBtn.type = "button";
-    retryBtn.className = "secondary";
-    retryBtn.textContent = "もう一度保存";
-    retryBtn.addEventListener("click", () => void runSave());
-    actions.appendChild(retryBtn);
     card.appendChild(actions);
     notices.appendChild(card);
     saveNotice = card;
@@ -887,7 +1016,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   let saving = false;
 
-  async function runSave(): Promise<void> {
+  async function runSave(options: { overwrite?: boolean } = {}): Promise<void> {
     if (saving || guard.blocked) return;
     saving = true;
     saveBtn.disabled = true;
@@ -904,8 +1033,25 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         studentCode: sheet.studentCode,
         times: sheet.times,
         verifyQuery: query,
+        baseline: serverFingerprints,
+        overwrite: options.overwrite === true,
       });
-      if (!result.ok) {
+      if (result.ok) {
+        // POST が通った。次の保存で他所での変更を見つける基準は、照合できたかに関わらず今の状態に合わせる
+        if (result.nextBaseline) serverFingerprints = result.nextBaseline;
+        for (const [id, values] of result.sent ?? []) baseValues.set(id, values);
+      }
+      if (result.conflictFieldIds && result.conflictFieldIds.length > 0) {
+        // 他所で変わった設問を、送ると置き換えてしまう。送らずに止め、どうするかを利用者に選ばせる
+        dirty = true;
+        const count = result.conflictFieldIds.length;
+        setSaveStatus(`保存していません(他所での変更が${count}件あります)`, "#a02622");
+        showSaveNotice(
+          `この画面を開いたあとに、サーバー側で内容が変わった設問が${count}件あります。このまま保存すると、その内容が上書きされます。\n内容を確かめて「上書きして保存」するか、この画面を閉じて開き直してください(開き直すと、この端末の下書きを、変わった設問がわかる形で復元できます)。`,
+          result.conflictFieldIds,
+          true,
+        );
+      } else if (!result.ok) {
         // 入力はこの端末に残っている。失敗の理由と、次に何をすればよいかを併せて示す
         let message = result.blockedReason ?? (result.errors ?? ["保存に失敗しました。"]).join("\n");
         if (!result.blockedReason) {
@@ -979,6 +1125,20 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   }
   nextEmptyBtn.addEventListener("click", goToNextEmpty);
 
+  /** Cmd+S。保存できないときは黙って戻らず、理由を告げる */
+  function saveByShortcut(): void {
+    if (guard.blocked) {
+      announce(guard.reason ?? "このシートは保存できません");
+      return;
+    }
+    void runSave();
+  }
+
+  /** Cmd+D。テキスト設問以外では変えられないので、その旨を告げる */
+  function toggleDirectionByShortcut(): void {
+    if (!editor?.toggleDirection()) announce("この設問は書字方向を変えられません");
+  }
+
   // ショートカットはオーバーレイ全体で効かせたいので window で受ける。
   // 一覧に戻る(form が捨てられる)か、オーバーレイが閉じられたら自分で外れる。
   function onKeyDown(event: KeyboardEvent): void {
@@ -996,19 +1156,32 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       goToNextEmpty();
       return;
     }
-    if (event.ctrlKey || event.metaKey) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        stepField(event.shiftKey ? -1 : 1);
-      } else if (event.key === "s" || event.key === "S") {
-        event.preventDefault();
-        void runSave();
-      }
+    // Shift+Enter だけ。Enter 単独は入力欄の改行に任せる
+    if (event.key === "Enter" && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      stepField(1);
       return;
     }
-    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-      event.preventDefault();
-      viewer.step(event.key === "ArrowUp" ? -1 : 1);
+    // Cmd(Mac は ⌘、それ以外は Ctrl)+ 矢印・S・D。Shift・Alt を併用したものは範囲選択などブラウザの操作なので奪わない。
+    // 処理するキーには stopPropagation も付ける: 設問ストリップや選択肢の ←→ が同じキーで二重に動くのを防ぐ
+    if (isCmdKey(event) && !event.shiftKey && !event.altKey) {
+      const key = event.key.toLowerCase();
+      if (key === "arrowleft" || key === "arrowright" || key === "arrowup" || key === "arrowdown") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (key === "arrowleft") stepField(-1);
+        else if (key === "arrowright") stepField(1);
+        else viewer.step(key === "arrowup" ? -1 : 1);
+        return;
+      }
+      if (key === "s" || key === "d") {
+        event.preventDefault();
+        event.stopPropagation();
+        // 押しっぱなしで保存や向きの切り替えが連続しないよう、repeat は無視する
+        if (event.repeat) return;
+        if (key === "s") saveByShortcut();
+        else toggleDirectionByShortcut();
+      }
     }
   }
   window.addEventListener("keydown", onKeyDown, true);
@@ -1025,6 +1198,24 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     event.returnValue = "";
   }
   window.addEventListener("beforeunload", onBeforeUnload);
+
+  // 同じ回を別のタブでも開いて書くと、この端末の下書きを取り合う。書かれたことを知らせる(中身はマージしない)
+  const ownBackupKey = backupKey(sheet.studentCode, sheet.baseSheetId, sheet.times);
+  let otherTabNotice: HTMLElement | null = null;
+  function onStorage(event: StorageEvent): void {
+    if (!form.isConnected) {
+      window.removeEventListener("storage", onStorage);
+      return;
+    }
+    if (event.key !== ownBackupKey || otherTabNotice) return;
+    const bar = document.createElement("div");
+    bar.className = "es-warning";
+    bar.textContent =
+      "同じ回が別のタブでも編集されました。どちらか一方のタブで入力してください。両方で入力すると、この端末の下書きの内容が食い違うおそれがあります。";
+    notices.appendChild(bar);
+    otherTabNotice = bar;
+  }
+  window.addEventListener("storage", onStorage);
 
   // ---------------------------------------------------------------- 初期表示
   const firstEditable = fields.find(isEditable) ?? fields[0];
