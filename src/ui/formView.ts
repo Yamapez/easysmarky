@@ -11,6 +11,7 @@ import {
   loadBackup,
   saveBackup,
   saveSheetSummary,
+  type LoadedBackup,
   type SheetBackup,
 } from "../storage/backup";
 import { createFieldEditor, fieldLabel, fieldShortLabel, type FieldEditorHandle } from "./fieldEditor";
@@ -99,9 +100,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   opts.header.setBack(opts.onBack, "← 科目一覧");
   opts.header.setLeaveGuard(() => {
     if (!dirty) return true;
-    return window.confirm(
-      "保存されていない変更があります。\nこの端末には自動保存されていますが、Smarkyにはまだ反映されていません。\nこの画面を離れますか?",
-    );
+    // 自動保存に失敗しているときは「この端末に残っている」とは言わない(言うと、離れても失われないと誤解させる)
+    const message = backupFailed
+      ? "保存されていない変更があります。\nこの端末への自動保存にも失敗しているため、離れると入力内容が失われるおそれがあります。\nSmarkyにはまだ反映されていません。\nこの画面を離れますか?"
+      : "保存されていない変更があります。\nこの端末には自動保存されていますが、Smarkyにはまだ反映されていません。\nこの画面を離れますか?";
+    return window.confirm(message);
   });
   opts.header.setTitle(
     `${sheet.subjectName || report.subject_name} ／ 第${sheet.reportNo}回`,
@@ -426,8 +429,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     return backup;
   }
 
-  function persistSummary(savedAt: number): void {
-    saveSheetSummary(sheet.studentCode, sheet.baseSheetId, sheet.times, {
+  /** この端末に自動保存できていないか。true の間は警告を出し、離脱の確認もそう言う */
+  let backupFailed = false;
+
+  function persistSummary(savedAt: number): boolean {
+    return saveSheetSummary(sheet.studentCode, sheet.baseSheetId, sheet.times, {
       total: editableCount,
       filled: fields.filter(isFilledField).length,
       blocked: guard.blocked,
@@ -437,14 +443,18 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
 
   const persistBackup = debounce(() => {
     const at = Date.now();
-    saveBackup(sheet.studentCode, sheet.baseSheetId, sheet.times, collectBackup(), at);
+    const ok = saveBackup(sheet.studentCode, sheet.baseSheetId, sheet.times, collectBackup(), at);
     persistSummary(at);
-    lastSavedAt = at;
+    backupFailed = !ok;
+    // 書けたときだけ時刻を進める。失敗した時刻を「自動保存 hh:mm」と出すと、残っていると誤解させる
+    if (ok) lastSavedAt = at;
     refreshStatusText();
   }, 500);
 
-  // 開いただけでも一覧に進捗が出るよう、初回は即座に要約を残す
-  persistSummary(Date.now());
+  // 開いただけでも一覧に進捗が出るよう、初回は即座に要約を残す。
+  // 下書きはここでは書かない(既存の下書きを、復元するか決める前に空の値で上書きしてしまうため)。
+  // 代わりに要約が書けるかで、この端末に書き込めるかを確かめる。
+  backupFailed = !persistSummary(Date.now());
 
   // ---------------------------------------------------------------- 表示の更新
   function refreshProgress(): void {
@@ -466,6 +476,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   function markDirty(): void {
     editSeq++;
     dirty = true;
+    // 復元のあとに編集が入ったら「元に戻す」は無効にする。戻すと、今打った分が黙って消えるため
+    if (undoSeq !== null && undoSeq !== editSeq) removeRestoreBar();
     if (!saving) refreshSaveState();
   }
 
@@ -481,8 +493,13 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   }
 
   function refreshStatusText(): void {
-    const text = lastSavedAt ? `この端末に自動保存 ${formatTime(lastSavedAt)}` : "";
-    autosaveEl.textContent = text;
+    if (backupFailed) {
+      autosaveEl.textContent = "この端末に自動保存できません(容量・設定を確認)";
+      autosaveEl.classList.add("failed");
+      return;
+    }
+    autosaveEl.classList.remove("failed");
+    autosaveEl.textContent = lastSavedAt ? `この端末に自動保存 ${formatTime(lastSavedAt)}` : "";
   }
 
   function refreshFieldMeta(): void {
@@ -606,8 +623,6 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   }
 
   // ---------------------------------------------------------------- お知らせ欄
-  /** 下書き復元バー。保存成功時にサーバー側と揃うので消す */
-  let restoreBarEl: HTMLElement | null = null;
   if (guard.blocked) {
     const warn = document.createElement("div");
     warn.className = "es-warning";
@@ -615,15 +630,50 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     notices.appendChild(warn);
   }
 
-  const existingBackup = loadBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
-  if (existingBackup) {
-    const restoreBar = document.createElement("div");
-    restoreBar.className = "es-warning";
+  // 下書きの復元。復元バーは起動時に読んだ existingBackup から作り直す(ストレージは読み直さない)
+  let restoreBarEl: HTMLElement | null = null;
+  /** 復元した直後だけ、その直前の編集seq。ここから編集が入ると「元に戻す」は無効になる */
+  let undoSeq: number | null = null;
+
+  function removeRestoreBar(): void {
+    restoreBarEl?.remove();
+    restoreBarEl = null;
+    undoSeq = null;
+  }
+
+  /**
+   * 値を編集中の設問へ書き戻し、表示を組み直す。下書きは書かない(戻す操作で下書きを上書きしないため)。
+   * 呼び出し側は、先に removeRestoreBar() で undo 状態を外しておくこと(でないと自分の変更で消える)。
+   */
+  function applyValues(values: SheetBackup): void {
+    for (const field of fields) {
+      const entry = values[field.raw.id];
+      if (!entry || !isEditable(field)) continue;
+      // 選択式は今の選択肢に無い値を戻さない(画面に出せない値を保存してしまうのを防ぐ)
+      if (field.isEditableChoice && entry.text !== "" && !field.choices.includes(entry.text)) continue;
+      field.text = entry.text;
+      field.direction = entry.direction;
+      field.fontSize = entry.fontSize;
+      field.lineHeight = entry.lineHeight;
+      field.color = entry.color;
+    }
+    // 復元・元に戻した内容はサーバーに無い可能性があるので、保存するまで未保存扱いにする
+    markDirty();
+    renderEditor();
+    refreshProgress();
+    strip.refresh();
+    viewer.refreshRims();
+  }
+
+  function showRestoreOffer(backup: LoadedBackup): void {
+    removeRestoreBar();
+    const bar = document.createElement("div");
+    bar.className = "es-warning";
     const message = document.createElement("div");
-    message.textContent = existingBackup.savedAt
-      ? `この端末に、${formatDateTime(existingBackup.savedAt)} に入力した下書きが残っています。`
+    message.textContent = backup.savedAt
+      ? `この端末に、${formatDateTime(backup.savedAt)} に入力した下書きが残っています。`
       : "この端末に保存された下書きが残っています。";
-    restoreBar.appendChild(message);
+    bar.appendChild(message);
     const actions = document.createElement("div");
     actions.className = "es-warning-actions";
     const restoreBtn = document.createElement("button");
@@ -635,36 +685,50 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     discardBtn.textContent = "破棄する";
     actions.appendChild(restoreBtn);
     actions.appendChild(discardBtn);
-    restoreBar.appendChild(actions);
+    bar.appendChild(actions);
     restoreBtn.addEventListener("click", () => {
-      for (const field of fields) {
-        const entry = existingBackup.fields[field.raw.id];
-        if (!entry) continue;
-        // 選択式は今の選択肢に無い値を復元しない(画面に出せない値を保存してしまうのを防ぐ)
-        if (field.isEditableChoice && entry.text !== "" && !field.choices.includes(entry.text)) continue;
-        field.text = entry.text;
-        field.direction = entry.direction;
-        field.fontSize = entry.fontSize;
-        field.lineHeight = entry.lineHeight;
-        field.color = entry.color;
-      }
-      restoreBar.remove();
-      restoreBarEl = null;
-      // 復元した内容はサーバーに無い可能性があるので、保存するまで未保存扱いにする
-      markDirty();
-      renderEditor();
-      refreshProgress();
-      strip.refresh();
-      viewer.refreshRims();
+      // 復元で今の入力が消えるので、直前の値を控えてから当てる
+      const before = collectBackup();
+      applyValues(backup.fields);
+      showRestoredBanner(backup, before);
     });
     discardBtn.addEventListener("click", () => {
+      // 破棄すると戻せない。離脱ガードと同じく確認を通す
+      if (!window.confirm("この端末に保存された下書きを破棄します。\n破棄すると元に戻せません。よろしいですか?")) return;
       clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
-      restoreBar.remove();
-      restoreBarEl = null;
+      removeRestoreBar();
     });
-    notices.appendChild(restoreBar);
-    restoreBarEl = restoreBar;
+    notices.appendChild(bar);
+    restoreBarEl = bar;
   }
+
+  function showRestoredBanner(backup: LoadedBackup, before: SheetBackup): void {
+    removeRestoreBar();
+    const bar = document.createElement("div");
+    bar.className = "es-warning";
+    const message = document.createElement("div");
+    message.textContent = "下書きを復元しました。内容を確かめ、問題なければ下書き保存してください。";
+    bar.appendChild(message);
+    const actions = document.createElement("div");
+    actions.className = "es-warning-actions";
+    const undoBtn = document.createElement("button");
+    undoBtn.type = "button";
+    undoBtn.textContent = "元に戻す";
+    undoBtn.addEventListener("click", () => {
+      // 戻したあとも下書きは残っているので、復元の選択肢をもう一度出す
+      removeRestoreBar();
+      applyValues(before);
+      showRestoreOffer(backup);
+    });
+    actions.appendChild(undoBtn);
+    bar.appendChild(actions);
+    notices.appendChild(bar);
+    restoreBarEl = bar;
+    undoSeq = editSeq;
+  }
+
+  const existingBackup = loadBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
+  if (existingBackup) showRestoreOffer(existingBackup);
 
   // 初回だけ操作の要点を出す。保存できない環境では毎回出て邪魔になるので出さない
   const HINT_KEY = "easysmarky:hint-dismissed";
@@ -718,8 +782,17 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     if (mismatchedIds.length > 0) {
       const jumpBtn = document.createElement("button");
       jumpBtn.type = "button";
+      // 押すたびに次の不一致の設問へ回る。件数が1つだけのときは位置を出さない
+      let cursor = -1;
       jumpBtn.textContent = "該当の設問を見る";
-      jumpBtn.addEventListener("click", () => focusField(mismatchedIds[0], { focusInput: true }));
+      jumpBtn.addEventListener("click", () => {
+        cursor = (cursor + 1) % mismatchedIds.length;
+        focusField(mismatchedIds[cursor], { focusInput: true });
+        jumpBtn.textContent =
+          mismatchedIds.length > 1
+            ? `該当の設問を見る (${cursor + 1}/${mismatchedIds.length})`
+            : "該当の設問を見る";
+      });
       actions.appendChild(jumpBtn);
     }
     const retryBtn = document.createElement("button");
@@ -757,30 +830,34 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         // 入力はこの端末に残っている。失敗の理由と、次に何をすればよいかを併せて示す
         let message = result.blockedReason ?? (result.errors ?? ["保存に失敗しました。"]).join("\n");
         if (!result.blockedReason) {
-          message += "\n入力内容はこの端末に残っています。";
+          message += backupFailed
+            ? "\nこの端末への自動保存もできていないため、画面を閉じないでください。"
+            : "\n入力内容はこの端末に残っています。";
         }
         setSaveStatus("保存に失敗しました。", "#a02622");
         showSaveNotice(message, []);
       } else if (result.mismatchedFieldIds && result.mismatchedFieldIds.length > 0) {
-        // 反映が確認できていないので、未保存扱いのまま離脱時に確認を出す
+        // 反映が確認できていないので、未保存扱いのまま離脱時に確認を出す。
+        // ステータスは短く、詳細と操作はカードに分けて二重表示を避ける
         dirty = true;
-        const message = `保存はされましたが、一部の設問(${result.mismatchedFieldIds.length}件)の反映が確認できませんでした。公式画面で内容をご確認ください。`;
-        setSaveStatus(message, "#a02622");
-        showSaveNotice(message, result.mismatchedFieldIds);
+        const count = result.mismatchedFieldIds.length;
+        setSaveStatus(`一部の設問の反映を確認できませんでした(${count}件)`, "#a02622");
+        showSaveNotice(
+          `保存はされましたが、一部の設問(${count}件)の反映が確認できませんでした。「該当の設問を見る」から内容を確かめ、公式画面でもご確認ください。`,
+          result.mismatchedFieldIds,
+        );
       } else if (!result.verified) {
         // 送信は通ったが照合できなかった。「確認済み」とは言わず、未確認のまま残す
         dirty = true;
-        const message = "保存は完了しましたが、サーバーで反映を確認できませんでした。公式画面で内容をご確認ください。";
-        setSaveStatus(message, "#a02622");
-        showSaveNotice(message, []);
+        setSaveStatus("反映を確認できませんでした。", "#a02622");
+        showSaveNotice("保存は完了しましたが、サーバーで反映を確認できませんでした。公式画面で内容をご確認ください。", []);
       } else {
         serverSavedAt = Date.now();
         dirty = editSeq !== seqAtStart;
         if (!dirty) {
-          // サーバー側と揃ったので、この端末のバックアップと復元バーはもう不要
+          // サーバー側と揃ったので、この端末のバックアップと復元バー(元に戻すを含む)はもう不要
           clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
-          restoreBarEl?.remove();
-          restoreBarEl = null;
+          removeRestoreBar();
         }
         refreshSaveState();
       }
