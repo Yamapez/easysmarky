@@ -102,7 +102,11 @@ export interface BaseSheetField {
   answer_texts: AnswerText[];
   answer_images: AnswerImage[];
   base64_canvas: string | null;
-  choice_texts: string[];
+  /**
+   * 選択式の選択肢。公式の生徒画面は配列として v-for で回しているが、文字列で来た場合は
+   * 公式と同じく1文字ずつ回る(model/field.ts の normalizeChoices で揃える)
+   */
+  choice_texts: string[] | string;
   correct_state?: unknown;
   sheet_field_mark?: boolean;
 }

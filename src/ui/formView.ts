@@ -1,6 +1,7 @@
 import { fetchDigitalReport } from "../api/endpoints";
 import type { DigitalReportQuery } from "../api/types";
-import { createEditableField, type EditableField } from "../model/field";
+import { createEditableField, isEditableField, type EditableField } from "../model/field";
+import { layoutAnswerText } from "../render/answerLayout";
 import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../model/sheetGeometry";
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
@@ -33,12 +34,12 @@ export interface FormViewOptions {
 }
 
 function isFilledField(field: EditableField): boolean {
-  return field.isEditableText && !field.hasExtraStamps && field.text.trim() !== "";
+  return isEditableField(field) && field.text.trim() !== "";
 }
 
 /** easysmarkyで入力できる設問か(進捗の分母になる) */
 function isEditable(field: EditableField): boolean {
-  return field.isEditableText && !field.hasExtraStamps;
+  return isEditableField(field);
 }
 
 function formatTime(at: number): string {
@@ -244,6 +245,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       isFilled: (id) => {
         const f = fieldById.get(id);
         return !!f && isFilledField(f);
+      },
+      // 入力した文字を枠の上に出す。解答欄プレビューと同じ描画・同じ中央配置(再開した下書きの既存位置は別。answerLayout.ts 参照)
+      text: (id) => {
+        const f = fieldById.get(id);
+        return f && isEditable(f) ? layoutAnswerText(f, cutMargin) : null;
       },
       onSelect: (id) => focusField(id, { focusInput: true }),
     },
@@ -634,6 +640,8 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       for (const field of fields) {
         const entry = existingBackup.fields[field.raw.id];
         if (!entry) continue;
+        // 選択式は今の選択肢に無い値を復元しない(画面に出せない値を保存してしまうのを防ぐ)
+        if (field.isEditableChoice && entry.text !== "" && !field.choices.includes(entry.text)) continue;
         field.text = entry.text;
         field.direction = entry.direction;
         field.fontSize = entry.fontSize;

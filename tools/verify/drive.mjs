@@ -155,11 +155,11 @@ function assertAll(label, r, viewportWidth) {
   const isMobile = viewportWidth < 900;
 
   // --- 1設問集中レイアウトの骨格 ---
-  // 設問は ア・イ・エ(編集不可)・ウ・オ の5件(page→id順。エは選択式で編集不可、
-  // オは縦長の解答欄。ア と オ は最初から入力済み)
-  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 5, s.initial.stripChips);
+  // 設問は ア・イ・エ(編集不可)・ウ・オ・カ の6件(page→id順。エは画像型で編集不可、
+  // オは縦長の解答欄、カは記号問題(選択式)。ア・オ・カ は最初から入力済み)
+  check(`${label}: 設問ストリップに全設問が並ぶ`, s.initial.stripChips === 6, s.initial.stripChips);
   check(`${label}: 最初の設問が開いている`, s.initial.editorName.includes("問1"), s.initial.editorName);
-  check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 2/4", s.initial.progress);
+  check(`${label}: 進捗が入力済み数を表す`, s.initial.progress === "入力済み 3/5", s.initial.progress);
 
   // --- 解答欄オーバーレイ(rim座標は解答用紙のものなので問題ページには出さない) ---
   check(`${label}: 問題ページには解答欄の枠を出さない`, s.initial.rimCount === 0, s.initial.rimCount);
@@ -260,10 +260,10 @@ function assertAll(label, r, viewportWidth) {
     s.stripNav.field3Crop);
   check(`${label}: 用紙端でも解答欄が切り出しに収まる`,
     s.stripNav.field3CenterPixel === "#e3e9ff", s.stripNav.field3CenterPixel);
-  // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる。
+  // 2ページ目へ送られ、そのページの用紙(800x1120)基準で枠が置かれる(ウ・オ・カの3件)。
   // rim[0,800,760,120] → left 0% / top 71.4285…% / width 95% / height 10.714…%
   check(`${label}: 設問を選ぶとその設問のページへ送られる`,
-    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 2,
+    s.stripNav.pagerLabel === "2 / 2" && s.stripNav.rimCount === 3,
     { pager: s.stripNav.pagerLabel, rims: s.stripNav.rimCount });
   check(`${label}: 枠がページごとの用紙サイズで置かれる`,
     s.stripNav.firstRimStyle?.left === "0%" && s.stripNav.firstRimStyle?.width === "95%",
@@ -335,10 +335,62 @@ function assertAll(label, r, viewportWidth) {
     `${s.resize.mutationCallbacksAt400ms} -> ${s.resize.mutationCallbacksAt1300ms}`);
   check(`${label}: 入力したテキストのプレビューが出る`,
     s.typed.field.display === "block" && parseFloat(s.typed.field.width) > 0, s.typed.field);
+  // 解答用紙ビューアの枠の上にも、入力した文字が保存画像と同じ位置で出る(以前は右のプレビューだけだった)
+  {
+    const vt = s.viewerText;
+    check(`${label}: 入力した文字が解答用紙の枠の上にも出る`,
+      vt?.afterType?.display === "block" && vt.afterType.isPng === true &&
+      vt.afterType.width > 0 && vt.afterType.height > 0,
+      vt?.afterType);
+    check(`${label}: 文字が枠の中央に置かれる`,
+      vt?.afterType != null && Math.abs(vt.afterType.centerDx) < 2 && Math.abs(vt.afterType.centerDy) < 2,
+      vt?.afterType);
+    check(`${label}: 文字の画像は枠のタップを妨げない`,
+      vt?.afterType?.pointerEvents === "none", vt?.afterType?.pointerEvents);
+    check(`${label}: 入力を空にすると枠の上の文字も消える`,
+      vt?.afterClear?.display === "none", vt?.afterClear);
+    check(`${label}: ページを送って戻っても枠の上の文字が残る`,
+      vt?.afterPageRoundTrip?.display === "block" && vt.restoredTyped === true,
+      vt?.afterPageRoundTrip);
+  }
   check(`${label}: 入力すると進捗とストリップが更新される`,
-    s.typed.progress === "入力済み 3/4" && s.typed.filledDots === 3,
+    s.typed.progress === "入力済み 4/5" && s.typed.filledDots === 4,
     { progress: s.typed.progress, dots: s.typed.filledDots });
   check(`${label}: 文字数と収まり判定が出る`, /字/.test(s.typed.fit), s.typed.fit);
+
+  // --- 記号問題(カ・選択式): 選択肢が並び、選ぶと枠に文字が出て、←→ で動き、無回答で消える ---
+  {
+    const c = s.choice;
+    check(`${label}: 記号問題を開くと選択肢が無回答込みで並ぶ`,
+      c?.opened?.includes("カ") && JSON.stringify(c?.buttons) === JSON.stringify(["無回答", "ア", "イ", "ウ", "エ"]),
+      c);
+    check(`${label}: 既存の答え(ウ)が選ばれた状態で始まる`,
+      c?.initialActive === "ウ" && c?.initialShown?.display === "block", c);
+    check(`${label}: 選ぶと左の解答用紙の枠にも文字が出る`,
+      c?.afterPickI?.active === "イ" && c?.afterPickI?.shown?.display === "block" && c?.afterPickI?.shown?.isPng === true,
+      c?.afterPickI);
+    check(`${label}: → で次の選択肢へ移る`, c?.afterRight === "ウ", c?.afterRight);
+    check(`${label}: 無回答を選ぶと枠の文字が消え、入力済みが1つ減る`,
+      c?.afterBlank?.active === "無回答" && c?.afterBlank?.shown?.display === "none" &&
+      c?.progressBefore === "入力済み 4/5" && c?.afterBlank?.progress === "入力済み 3/5",
+      { before: c?.progressBefore, after: c?.afterBlank });
+    check(`${label}: ← は無回答の前から最後の選択肢へ巡回する`, c?.afterLeft === "エ", c?.afterLeft);
+    check(`${label}: 選び直すと枠の文字が戻る`,
+      c?.final?.active === "エ" && c?.final?.shown?.display === "block" && c?.final?.progress === "入力済み 4/5",
+      c?.final);
+    // 保存で送られる内容: 選び直したので中央に置かれ、答えは選んだ記号になる
+    const stamp = (s.save.post?.answerTexts || []).find((p) => p.id === 6)?.answer_texts?.[0];
+    const expectX = (500 + 2 * 20 - (stamp?.width ?? 0)) / 2;
+    const expectY = (100 + 2 * 20 - (stamp?.height ?? 0)) / 2;
+    check(`${label}: 保存では選んだ記号が送られ、位置は中央に置き直される`,
+      stamp?.text === "エ" && Math.abs(stamp.x - expectX) < 0.01 && Math.abs(stamp.y - expectY) < 0.01 && stamp.width > 0,
+      stamp);
+    check(`${label}: 無回答で保存すると 1x1 の空スタンプとして送られる`,
+      Array.isArray(s.choiceBlankSave?.stamps) && s.choiceBlankSave.stamps.length === 1 &&
+      s.choiceBlankSave.stamps[0].text === "" && s.choiceBlankSave.stamps[0].width === 1 &&
+      s.choiceBlankSave.stamps[0].height === 1 && (s.choiceBlankSave.status || "").includes("反映を確認"),
+      s.choiceBlankSave);
+  }
   check(`${label}: Ctrl+↵ で次の設問に移る`,
     s.shortcut.after !== s.shortcut.before && s.shortcut.after.length > 0, s.shortcut);
 
@@ -361,12 +413,12 @@ function assertAll(label, r, viewportWidth) {
   check(`${label}: 未保存の間はタブを閉じる操作で確認が出る`,
     s.unloadDirty === true, s.unloadDirty);
   check(`${label}: 全設問が入ると保存バーに提出の案内が出る`,
-    s.allFilled.progress === "入力済み 4/4" && s.allFilled.saveNote.includes("全設問の入力が済みました"),
+    s.allFilled.progress === "入力済み 5/5" && s.allFilled.saveNote.includes("全設問の入力が済みました"),
     s.allFilled);
   check(`${label}: Alt+↵ で未入力が無いと告知する`,
     (s.altEnter.toastText || "").includes("未入力の設問はありません"), s.altEnter);
   check(`${label}: 最後の設問で進もうとすると告知する`,
-    s.edgeEnd.editorAtLast.includes("オ") && (s.edgeEnd.toastText || "").includes("最後の設問"),
+    s.edgeEnd.editorAtLast.includes("カ") && (s.edgeEnd.toastText || "").includes("最後の設問"),
     s.edgeEnd);
   check(`${label}: 設問チップは左右キーで隣へフォーカスが移る(開かない)`,
     s.stripArrow.focusedIsSecond === true && s.stripArrow.editorUnchanged === true, s.stripArrow);

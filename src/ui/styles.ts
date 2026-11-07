@@ -495,6 +495,34 @@ export const OVERLAY_STYLES = `
   background: #2196c9;
   color: #fff;
 }
+/* 選択式の選択肢一覧。書字方向トグルと同じ面を、縦に並べて選ぶ(1行に入らない長い選択肢も折り返す) */
+.es-choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.es-choice-btn {
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  font-size: 15px;
+  font-family: inherit;
+  padding: 10px 16px;
+  min-height: 44px;
+  min-width: 56px;
+  cursor: pointer;
+}
+.es-choice-btn.active {
+  background: #2196c9;
+  border-color: #2196c9;
+  color: #fff;
+}
+.es-choice-btn:focus-visible {
+  outline: 2px solid #2196c9;
+  outline-offset: 2px;
+}
 .es-fit {
   margin-left: auto;
   font-size: 13px;
@@ -830,6 +858,13 @@ button:focus-visible,
   border-color: #b9c2c7;
   background: rgba(185, 194, 199, .12);
   cursor: default;
+}
+/* 入力した文字(保存される画像と同じもの)を枠の上に重ねる。タップは枠に通すので pointer-events:none */
+.es-rim-text {
+  position: absolute;
+  pointer-events: none;
+  max-width: none;
+  max-height: none;
 }
 /* 今どの枠を見ればいいか一目でわかるよう、選択中以外を沈める */
 .es-viewer-rims.has-active .es-rim:not(.active) {

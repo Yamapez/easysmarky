@@ -193,7 +193,9 @@ export function createOverlay(options: CreateOverlayOptions = {}): EasySmarkyCon
         // IME確定のキャンセルでも Escape が飛んでくるブラウザがあるため無視する
         if (event.isComposing || event.keyCode === 229) return;
         const active = shadow.activeElement;
-        if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) {
+        // 選択式の選択肢ボタンにフォーカスがあるときも、入力中と同じ扱い(1回目はフォーカスを外すだけ)
+        const choiceFocused = active instanceof HTMLButtonElement && active.classList.contains("es-choice-btn");
+        if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement || choiceFocused) {
           active.blur();
           event.preventDefault();
           return;

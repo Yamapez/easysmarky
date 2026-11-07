@@ -73,6 +73,7 @@ userscript ビルドでは vite.config.ts 内のカスタムプラグインが m
 ### Smarky公式 app.js との対応
 
 `render/` と `model/toParam.ts` のロジックは、Smarky公式アプリ(minifyされた app.js)の挙動を忠実に再現したもの。コメントの「app.js の `Do`/`ye`/`$`/`ie`/`X` 相当」は公式コードのminify後関数名との対応を示す。計測式・改行分割規則(`/\r\n|\r|\n/`)・「保存の度に全answer_textsのPNGを再生成して再送する」方式などは公式と同一に保つこと。勝手に「改善」すると公式画面での表示とズレる。
+- 記号問題(`answer_type: 2`・選択式)も公式 app.js に合わせる。選択肢は `choice_texts` を並べ、選んだ文字は `answer_texts[0].text` に入る。選び直したときだけ中央に置き直し、無回答は 1x1 の空スタンプ(PNG は空文字で描く)。根拠は `src/model/toParam.ts` の `buildFieldForSave` と `src/ui/fieldEditor.ts` の選択式の分岐に書いてある
 
 ## 安全上の不変条件(変更禁止)
 

@@ -1,7 +1,7 @@
-import { Direction } from "../api/types";
-import type { EditableField } from "../model/field";
+import { AnswerType, Direction } from "../api/types";
+import { isEditableField, type EditableField } from "../model/field";
+import { layoutAnswerText } from "../render/answerLayout";
 import { measureText } from "../render/measure";
-import { renderAnswerText } from "../render/renderText";
 import { drawCropPreview, type CropRect } from "./cropPreview";
 
 export interface FieldEditorOptions {
@@ -60,7 +60,7 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   const el = document.createElement("div");
   el.className = "es-field-editor";
 
-  if (!field.isEditableText || field.hasExtraStamps) {
+  if (!isEditableField(field)) {
     const card = document.createElement("div");
     card.className = "es-field-locked";
     const name = document.createElement("div");
@@ -68,9 +68,12 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     name.textContent = fieldLabel(field);
     const note = document.createElement("div");
     note.className = "es-field-locked-note";
-    note.textContent = field.isEditableText
+    const hasOwnEditor = field.isEditableText || field.isEditableChoice;
+    note.textContent = hasOwnEditor
       ? "この設問には複数の解答が既に入力されています。現バージョンのeasysmarkyでは編集できません(公式画面をご利用ください)。"
-      : "この設問は選択肢・画像などの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
+      : field.raw.answer_type === AnswerType.Choice
+        ? "この設問は選択肢の一覧が取得できないため、easysmarkyでは編集できません(公式画面をご利用ください)。"
+        : "この設問は画像などの解答欄のため、easysmarkyでは編集できません(公式画面をご利用ください)。";
     card.appendChild(name);
     card.appendChild(note);
     el.appendChild(card);
@@ -266,12 +269,6 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     // オーバーレイと rim ガイドが表示と食い違わない
     const box = cropCanvas.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return;
-    const trimmed = field.text.trim();
-    if (!trimmed) {
-      overlayImg.style.display = "none";
-      lastRendered = null;
-      return;
-    }
     // 「base_sheet(rim)座標 → CSSピクセル」の倍率。cropCanvas の内部解像度は
     // ページ画像のピクセル数なので、そこからスケールを出してはいけない。
     const scaleX = box.width / rect.width;
@@ -287,39 +284,109 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
     ].join(" ");
     if (key === lastRendered) return;
 
-    const size = measureText({
-      text: field.text,
-      fontSize: field.fontSize,
-      lineHeight: field.lineHeight,
-      direction: field.direction as typeof Direction.Horizon,
-    });
-    if (size.width <= 0 || size.height <= 0) {
+    // 配置と PNG は解答用紙ビューアと共通(render/answerLayout.ts)。ここでは切り出し原点を引き、表示倍率を掛けるだけ
+    const layout = layoutAnswerText(field, cutMargin);
+    if (!layout) {
       overlayImg.style.display = "none";
       lastRendered = null;
       return;
     }
-    // 保存時(model/toParam.ts の buildAnswerText)と同じ中央配置の式。あちらの x,y は
-    // 「切り出し原点 (rim − cut_margin) からの相対座標」なので、ここでは用紙の絶対座標に
-    // 直したうえで、実際に切り出した原点(用紙の端ではクランプされる)を引く。
-    const [rimX, rimY, rimW, rimH] = field.raw.rim;
-    const textX = rimX - cutMargin + (rimW + 2 * cutMargin - size.width) / 2;
-    const textY = rimY - cutMargin + (rimH + 2 * cutMargin - size.height) / 2;
-    const png = renderAnswerText({
-      text: field.text,
-      width: size.width,
-      height: size.height,
-      font_size: field.fontSize,
-      line_height: field.lineHeight,
-      color: field.color,
-      direction: field.direction,
-    });
-    overlayImg.src = `data:image/png;base64,${png}`;
-    overlayImg.style.left = `${(textX - rect.x) * scaleX}px`;
-    overlayImg.style.top = `${(textY - rect.y) * scaleY}px`;
-    overlayImg.style.width = `${size.width * scaleX}px`;
-    overlayImg.style.height = `${size.height * scaleY}px`;
+    overlayImg.src = `data:image/png;base64,${layout.png}`;
+    overlayImg.style.left = `${(layout.x - rect.x) * scaleX}px`;
+    overlayImg.style.top = `${(layout.y - rect.y) * scaleY}px`;
+    overlayImg.style.width = `${layout.width * scaleX}px`;
+    overlayImg.style.height = `${layout.height * scaleY}px`;
     overlayImg.style.display = "block";
     lastRendered = key;
+  }
+
+  // --- 選択式: テキスト入力の代わりに選択肢を並べる(公式の生徒画面と同じ、無回答を含む一覧) ---
+  // 選ぶと text に選択肢の文字が入る。書字方向・文字サイズは公式どおり(選択時は 32pt・行送り 0)
+  if (field.isEditableChoice) {
+    const choiceTools = document.createElement("div");
+    choiceTools.className = "es-editor-tools";
+    const choiceName = document.createElement("span");
+    choiceName.className = "es-field-name";
+    choiceName.textContent = fieldLabel(field);
+    choiceTools.appendChild(choiceName);
+    el.appendChild(choiceTools);
+
+    const list = document.createElement("div");
+    list.className = "es-choice-list";
+    list.setAttribute("role", "group");
+    list.setAttribute("aria-label", "選択肢");
+    el.appendChild(list);
+
+    // 無回答("")を先頭に、選択肢を続けた順で巡回する(公式の ←→ と同じ並び)
+    const states: string[] = ["", ...field.choices];
+    const buttons = new Map<string, HTMLButtonElement>();
+    for (const value of states) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "es-choice-btn";
+      btn.textContent = value === "" ? "無回答" : value;
+      btn.addEventListener("click", () => pickChoice(value));
+      list.appendChild(btn);
+      buttons.set(value, btn);
+    }
+
+    const refreshChoice = (): void => {
+      for (const [value, btn] of buttons) {
+        const active = value === field.text;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+      }
+    };
+
+    const pickChoice = (value: string): void => {
+      if (value === field.text) return; // 同じものを押し直しただけなら変更ではない
+      field.text = value;
+      field.choiceEdited = true; // 選び直したので、保存時は中央へ置き直す
+      if (value !== "") {
+        field.fontSize = 32;
+        field.lineHeight = 0;
+      }
+      refreshChoice();
+      updatePreview();
+      opts.onChange(field);
+    };
+
+    // ←→ で前後の選択肢へ(公式と同じ。無回答を挟んで端で巡回する)
+    list.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      // Alt・Ctrl・Cmd・Shift との組み合わせはブラウザの操作(戻る・単語移動など)に任せる
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.preventDefault();
+      const current = states.indexOf(field.text);
+      const from = current < 0 ? 0 : current;
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      const next = (from + step + states.length) % states.length;
+      pickChoice(states[next]);
+      buttons.get(states[next])?.focus();
+    });
+
+    refreshChoice();
+    window.setTimeout(updatePreview, 50);
+    const choiceObserver = new ResizeObserver(() => updatePreview());
+    choiceObserver.observe(previewSlot);
+
+    const choiceHints = document.createElement("div");
+    choiceHints.className = "es-key-hints";
+    choiceHints.innerHTML =
+      "<span><kbd>←</kbd><kbd>→</kbd>選択肢を移動</span>" +
+      "<span><kbd>Ctrl</kbd>+<kbd>↵</kbd>次の設問</span>" +
+      "<span><kbd>Alt</kbd>+<kbd>↵</kbd>次の未入力</span>" +
+      "<span><kbd>Alt</kbd>+<kbd>↑↓</kbd>ページ送り</span>" +
+      "<span><kbd>Ctrl</kbd>+<kbd>S</kbd>下書き保存</span>" +
+      "<span><kbd>Esc</kbd>閉じる</span>";
+    el.appendChild(choiceHints);
+
+    return {
+      element: el,
+      getField: () => field,
+      focus: () => (buttons.get(field.text) ?? buttons.get(""))?.focus(),
+      destroy: () => choiceObserver.disconnect(),
+    };
   }
 
   // --- 設問名(スマホのみ表示) + 縦横トグル + 文字数 ---
