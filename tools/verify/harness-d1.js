@@ -23,4 +23,13 @@
   window.__esScenarios.d1mismatch = { skipWriteBackIds: [2, 3, 5] };
   // 不一致が1件だけのとき(件数の表示が出ないことを見る)
   window.__esScenarios.d1mismatch1 = { skipWriteBackIds: [2] };
+  // 保存の応答を遅らせ、下書きの自動保存(500ms)より後に保存が終わるようにする(保留中の書き込みの取り消しを見る)
+  window.__esScenarios.d1savequick = { delayMs: { save: 300 } };
+  // 前の退避(古い内容)が残っている状態で、下書きに提示が出ている(退避は今の下書きで置き換わるべき)
+  window.__esScenarios.d1archive = {
+    seedStorage: {
+      [DRAFT_KEY]: draft(Date.now() - 60 * 60 * 1000),
+      "easysmarky:archive:2025HF249:1001:1": JSON.stringify({ v: 2, savedAt: 0, fields: {} }),
+    },
+  };
 })();

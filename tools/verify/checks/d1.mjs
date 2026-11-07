@@ -161,8 +161,12 @@ export async function run(ctx) {
     undoneB === "" && undoneA === "既存の下書きテキスト", { undoneB, undoneA });
   await sleep(700); // 自動保存(500ms の遅延)が遅れて書かれていないことを確かめてから読む
   const stored = await storedDraft();
-  check("D1 元に戻しても、この端末の下書きは書き換えない",
-    stored !== null && JSON.parse(stored).fields["1"].text === "復元した下書きア", stored);
+  // 元に戻すと、画面の内容(復元前)が下書きにも書かれる。復元の際に上書きする前の下書きは退避してある
+  check("D1 元に戻すと、画面の内容が下書きにも書かれる",
+    stored !== null && JSON.parse(stored).fields["1"].text === "既存の下書きテキスト", stored);
+  const archivedAtRestore = await ev(`localStorage.getItem("easysmarky:archive:2025HF249:1001:1")`);
+  check("D1 復元で上書きされる前の古い下書きは、退避されて残る",
+    archivedAtRestore !== null && JSON.parse(archivedAtRestore).fields["1"].text === "復元した下書きア", archivedAtRestore);
   const offerAgain = await warnings();
   check("D1 元に戻したあとは、復元と破棄の選択肢をもう一度出す",
     offerAgain.includes("残っています") && (await hasButton("復元する")) && !(await hasButton("元に戻す")), offerAgain);
@@ -267,6 +271,52 @@ export async function run(ctx) {
   check("D1 復元に答えたあとは、入力がこの端末の下書きに自動保存される",
     resumedDraft !== null && JSON.parse(resumedDraft).fields["1"].text === "復元のあとに打った文",
     resumedDraft);
+
+  // 以前の退避が残っていても、今の下書き(画面に出ていた内容)で退避を置き換える
+  await openHarness(send, `${URL_HARNESS}?scenario=d1archive`);
+  await openSheet();
+  await sleep(300);
+  const draftBeforeArchive = await storedDraft();
+  await setText("退避を置き換える入力");
+  await sleep(1200);
+  const archiveNow = await ev(`localStorage.getItem("easysmarky:archive:2025HF249:1001:1")`);
+  check("D1 以前の退避が残っていても、上書き直前の下書きで退避を置き換える",
+    archiveNow === draftBeforeArchive, { archiveIsPrevious: archiveNow === JSON.stringify({ v: 2, savedAt: 0, fields: {} }) });
+
+  // 退避できないときは、下書きを上書きせず、この端末に残っていないことを警告する
+  await openHarness(send, `${URL_HARNESS}?scenario=d1restore`);
+  await openSheet();
+  await sleep(300);
+  const draftBeforeFail = await storedDraft();
+  await ev(`(() => {
+    window.__d1ArchiveOrig = window.__d1ArchiveOrig || Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (String(k).startsWith("easysmarky:archive:")) throw new DOMException("quota", "QuotaExceededError");
+      return window.__d1ArchiveOrig.call(this, k, v);
+    };
+    return true;
+  })()`);
+  await setText("退避に失敗する入力");
+  await sleep(1200);
+  const draftAfterFail = await storedDraft();
+  const failText = await text(".es-autosave");
+  check("D1 退避できないときは下書きを上書きせず、自動保存の失敗を警告する",
+    draftAfterFail === draftBeforeFail && (await ev(`${sel(".es-autosave")}.classList.contains("failed")`)) === true &&
+    failText.includes("自動保存できません"),
+    { same: draftAfterFail === draftBeforeFail, failText });
+  await ev(`(() => { if (window.__d1ArchiveOrig) Storage.prototype.setItem = window.__d1ArchiveOrig; return true; })()`);
+
+  // 保存が済むより先に保留中の下書きの書き込みが残っていても、保存後にその古い内容で書き戻さない
+  await openHarness(send, `${URL_HARNESS}?scenario=d1savequick`);
+  await openSheet();
+  await sleep(300);
+  await setText("保存と競合する入力");
+  await clickSave();
+  await until(`${sel(".es-save-status")}.textContent.includes("保存済み")`, 8000);
+  await sleep(900); // 500ms の自動保存の予定を過ぎるまで待つ
+  const draftAfterQuickSave = await storedDraft();
+  check("D1 保存が済んだあと、保留中の下書きの書き込みで下書きが戻らない",
+    draftAfterQuickSave === null, draftAfterQuickSave);
 
   // ================================================================ D. 保存後照合の不一致が3件
   await openHarness(send, `${URL_HARNESS}?scenario=d1mismatch`);

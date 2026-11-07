@@ -6,7 +6,7 @@ import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../mode
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
 import {
-  archiveBackupOnce,
+  archiveBackup,
   clearArchive,
   clearBackup,
   debounce,
@@ -455,8 +455,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
   function persistNow(): void {
     const at = Date.now();
     if (offerPending) {
-      // 古い下書きは、上書きする前に退避する。退避できなければ、今の入力では上書きしない(要約だけ更新)
-      if (!archiveBackupOnce(sheet.studentCode, sheet.baseSheetId, sheet.times)) {
+      // 古い下書きは、上書きする前に退避する。退避できなければ、今の入力では上書きしない(要約だけ更新し、警告を出す)
+      if (!archiveBackup(sheet.studentCode, sheet.baseSheetId, sheet.times)) {
+        backupFailed = true;
         persistSummary(at);
         refreshStatusText();
         return;
@@ -773,9 +774,11 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     undoBtn.type = "button";
     undoBtn.textContent = "元に戻す";
     undoBtn.addEventListener("click", () => {
-      // 戻したあとも下書きは残っているので、復元の選択肢をもう一度出す
       removeRestoreBar();
       applyValues(before);
+      // 画面に戻した内容を下書きにも書く。復元の際に書いた分の古い下書きは退避してあるので失われない
+      persistNow();
+      // 戻したあとも古い下書きは残っているので、復元の選択肢をもう一度出す
       showRestoreOffer(backup);
     });
     actions.appendChild(undoBtn);
@@ -919,7 +922,9 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
         dirty = editSeq !== seqAtStart;
         // まだ退避していない古い下書きは、答えるまで残す(保存の副作用で黙って消さない)
         if (!dirty && !offerPending) {
-          // サーバー側と揃ったので、この端末のバックアップ・退避・復元バー(元に戻すを含む)はもう不要
+          // サーバー側と揃ったので、この端末のバックアップ・退避・復元バー(元に戻すを含む)はもう不要。
+          // 保留中の下書きの書き込みが、消したあとに古い内容で戻さないよう取り消す
+          persistBackup.cancel();
           clearBackup(sheet.studentCode, sheet.baseSheetId, sheet.times);
           clearArchive(sheet.studentCode, sheet.baseSheetId, sheet.times);
           removeRestoreBar();

@@ -95,15 +95,14 @@ function archiveKey(studentCode: string, baseSheetId: number, times: number): st
 }
 
 /**
- * 古い下書きを、上書きされる前に退避する。退避先が既にあれば残す(最初の古い下書きを優先する)。
+ * 上書きされる直前の下書きを退避する。退避先は、その時点の下書きで置き換える(画面に出ていた内容を残すため)。
  * 退避できなければ false。呼び出し側は、退避できないうちは下書きを上書きしない。
  */
-export function archiveBackupOnce(studentCode: string, baseSheetId: number, times: number): boolean {
+export function archiveBackup(studentCode: string, baseSheetId: number, times: number): boolean {
   try {
     const current = localStorage.getItem(backupKey(studentCode, baseSheetId, times));
     if (current === null) return true; // 退避するものが無い
-    const key = archiveKey(studentCode, baseSheetId, times);
-    if (localStorage.getItem(key) === null) localStorage.setItem(key, current);
+    localStorage.setItem(archiveKey(studentCode, baseSheetId, times), current);
     return true;
   } catch {
     return false;
@@ -153,10 +152,19 @@ export function saveSheetSummary(
 export function debounce<Args extends unknown[]>(
   fn: (...args: Args) => void,
   waitMs: number,
-): (...args: Args) => void {
+): ((...args: Args) => void) & { cancel: () => void } {
   let timer: number | undefined;
-  return (...args: Args) => {
+  const run = (...args: Args) => {
     if (timer !== undefined) window.clearTimeout(timer);
-    timer = window.setTimeout(() => fn(...args), waitMs);
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      fn(...args);
+    }, waitMs);
   };
+  // 保留中の呼び出しを捨てる。保存が済んで下書きを消したあとに、古い内容で書き戻されないため
+  run.cancel = () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+    timer = undefined;
+  };
+  return run;
 }
