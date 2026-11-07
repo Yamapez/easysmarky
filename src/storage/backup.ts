@@ -63,18 +63,21 @@ export function loadBackup(studentCode: string, baseSheetId: number, times: numb
   }
 }
 
+/** 書けたら true。false なら呼び出し側がこの端末に残っていないことを利用者に伝える */
 export function saveBackup(
   studentCode: string,
   baseSheetId: number,
   times: number,
   data: SheetBackup,
   savedAt: number = Date.now(),
-): void {
+): boolean {
   try {
     const stored: StoredBackupV2 = { v: 2, savedAt, fields: data };
     localStorage.setItem(backupKey(studentCode, baseSheetId, times), JSON.stringify(stored));
+    return true;
   } catch {
-    // localStorageが使えない環境(プライベートモード等の容量制限)は無視する
+    // localStorageが使えない環境(プライベートモード・容量超過など)。黙って失敗させず false を返す
+    return false;
   }
 }
 
@@ -100,18 +103,21 @@ export function loadSheetSummaries(studentCode: string): SheetSummaries {
   }
 }
 
+/** 書けたら true。起動直後の書き込み可否の確認にも使う(下書きは書かずに済ませるため) */
 export function saveSheetSummary(
   studentCode: string,
   baseSheetId: number,
   times: number,
   summary: SheetSummary,
-): void {
+): boolean {
   try {
     const all = loadSheetSummaries(studentCode);
     all[sheetSummaryId(baseSheetId, times)] = summary;
     localStorage.setItem(summaryKey(studentCode), JSON.stringify(all));
+    return true;
   } catch {
-    // 進捗表示が出なくなるだけなので無視する
+    // 進捗表示が出なくなるだけ。呼び出し側は、書けなかったことを警告の判断材料にする
+    return false;
   }
 }
 
