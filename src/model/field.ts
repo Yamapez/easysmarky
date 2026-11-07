@@ -1,6 +1,7 @@
 import { AnswerType, type BaseSheetField } from "../api/types";
 import { defaultAnswerTextValues, firstAnswerText } from "./answerText";
 import { loadPrefs } from "../storage/prefs";
+import type { RimGridCounts } from "../render/gridDetect";
 
 export interface EditableField {
   raw: BaseSheetField;
@@ -19,6 +20,13 @@ export interface EditableField {
   fontSize: number;
   lineHeight: number;
   color: string;
+  /** 解答欄のマス目の検出結果(開いたときに読む。保存もする)。null は「マス目なし・未検出」 */
+  grid: RimGridCounts | null;
+  /**
+   * マス目に合わせて1行あたりの文字数で改行しているときの、その文字数。null なら改行もマス合わせもしない。
+   * fontSize / lineHeight はこの値に合わせて決まる(model/gridLayout.ts の applyGridStyle)
+   */
+  gridPerLine: number | null;
 }
 
 /**
@@ -63,6 +71,8 @@ export function createEditableField(raw: BaseSheetField): EditableField {
     fontSize: primary?.font_size ?? defaults.fontSize,
     lineHeight: primary?.line_height ?? defaults.lineHeight,
     color: primary?.color ?? defaults.color,
+    grid: null,
+    gridPerLine: null,
   };
 }
 

@@ -1,3 +1,5 @@
+import type { RimGridCounts } from "../render/gridDetect";
+
 /** 設問の編集できる値(テキストと書式) */
 export interface FieldValues {
   text: string;
@@ -14,6 +16,11 @@ export interface FieldBackup extends FieldValues {
    * v:2 のまま任意項目として足している(古い版が読んでも、この項目を無視するだけで壊れない)。
    */
   base?: FieldValues;
+  /**
+   * 解答欄のマス目の検出結果(v0.12.0 以降)。無い古い下書きは null 扱い。
+   * 文字サイズ・改行はこれから決め直すので、ここだけ残せば復元後も同じ配置になる
+   */
+  grid?: RimGridCounts | null;
 }
 
 export type SheetBackup = Record<number, FieldBackup>;

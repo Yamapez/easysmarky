@@ -4,9 +4,10 @@ import {
   type ParamAnswerText,
   type ParamBaseSheetField,
 } from "../api/types";
-import { stampOffsetInCut } from "../render/answerLayout";
+import { gridStampOrigin, stampOffsetInCut } from "../render/answerLayout";
 import { measureText } from "../render/measure";
 import { renderAnswerText } from "../render/renderText";
+import { renderedText } from "./gridLayout";
 import { fieldHasBinaryContent, isEditableField, type EditableField } from "./field";
 
 export interface SaveGuardResult {
@@ -58,13 +59,14 @@ interface AnswerTextDraft {
    * PNG は既定の「テキスト」を使わず空文字で描く(公式の ce(n,"") に相当)
    */
   blankChoice?: boolean;
+  /** マス目に合わせて置く(新規のみ。既存の x,y は引き継がない) */
+  alignToGrid?: boolean;
 }
 
 function buildAnswerText(
   draft: AnswerTextDraft,
   fieldId: number,
-  rimWidth: number,
-  rimHeight: number,
+  rim: [number, number, number, number],
   cutMargin: number,
 ): { meta: ParamAnswerText; zipEntry: BuiltZipEntry | null } {
   // measureText は空文字を「テキスト」として計測するので、無回答は 1x1 を直接使う
@@ -78,9 +80,18 @@ function buildAnswerText(
       });
 
   const hasExistingPosition = draft.existingX != null && draft.existingY != null;
-  const centered = stampOffsetInCut(rimWidth, rimHeight, cutMargin, size);
-  const x = hasExistingPosition ? (draft.existingX as number) : centered.x;
-  const y = hasExistingPosition ? (draft.existingY as number) : centered.y;
+  let x: number;
+  let y: number;
+  if (draft.alignToGrid) {
+    // 解答欄プレビューと同じ配置(answerLayout.gridStampOrigin)。切り出し原点からの相対座標
+    const origin = gridStampOrigin(rim, draft.direction, size, cutMargin);
+    x = origin.x;
+    y = origin.y;
+  } else {
+    const centered = stampOffsetInCut(rim[2], rim[3], cutMargin, size);
+    x = hasExistingPosition ? (draft.existingX as number) : centered.x;
+    y = hasExistingPosition ? (draft.existingY as number) : centered.y;
+  }
 
   const meta: ParamAnswerText = {
     id: draft.id,
@@ -137,9 +148,9 @@ function buildAnswerText(
  */
 export function buildFieldForSave(field: EditableField, cutMargin: number): BuildFieldResult {
   const raw = field.raw;
-  const rimWidth = raw.rim[2];
-  const rimHeight = raw.rim[3];
   const existingTexts: AnswerText[] = raw.answer_texts ?? [];
+  // マス目に合わせた改行を入れた本文(入力欄の text は変えない)。マス目が無ければ text そのもの
+  const text = renderedText(field);
 
   const zipEntries: BuiltZipEntry[] = [];
   const answerTexts: ParamAnswerText[] = [];
@@ -156,7 +167,7 @@ export function buildFieldForSave(field: EditableField, cutMargin: number): Buil
       ? {
           id: t.id,
           idx: t.idx ?? 0,
-          text: field.text,
+          text,
           fontSize: field.fontSize,
           lineHeight: field.lineHeight,
           color: field.color,
@@ -177,23 +188,24 @@ export function buildFieldForSave(field: EditableField, cutMargin: number): Buil
           existingY: t.y,
         };
 
-    const { meta, zipEntry } = buildAnswerText(draft, raw.id, rimWidth, rimHeight, cutMargin);
+    const { meta, zipEntry } = buildAnswerText(draft, raw.id, raw.rim, cutMargin);
     answerTexts.push(meta);
     if (zipEntry) zipEntries.push(zipEntry);
   });
 
   // 元々テキストが存在しなかった設問に、ユーザーが新規入力した場合(選択式は選んだときだけ作る)
-  if ((field.isEditableText || field.isEditableChoice) && existingTexts.length === 0 && field.text.trim()) {
+  if ((field.isEditableText || field.isEditableChoice) && existingTexts.length === 0 && text.trim()) {
     const draft: AnswerTextDraft = {
       id: null,
       idx: 0,
-      text: field.text,
+      text,
       fontSize: field.fontSize,
       lineHeight: field.lineHeight,
       color: field.color,
       direction: field.direction,
+      alignToGrid: field.gridPerLine != null,
     };
-    const { meta, zipEntry } = buildAnswerText(draft, raw.id, rimWidth, rimHeight, cutMargin);
+    const { meta, zipEntry } = buildAnswerText(draft, raw.id, raw.rim, cutMargin);
     answerTexts.push(meta);
     if (zipEntry) zipEntries.push(zipEntry);
   }

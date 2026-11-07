@@ -2,6 +2,7 @@ import { ApiError, describeApiError, type ApiErrorKind } from "../api/client";
 import { fetchDigitalReport, saveDigitalReport } from "../api/endpoints";
 import type { DigitalReportQuery, DigitalReportResponse, SaveErrorResponse } from "../api/types";
 import { isEditableField, type EditableField } from "../model/field";
+import { renderedText } from "../model/gridLayout";
 import { buildFieldForSave, checkSaveGuard, type BuiltZipEntry } from "../model/toParam";
 import { buildAnswersZip } from "./buildZip";
 import { findConflicts, fingerprintField, fingerprintSent, fingerprintsOf } from "./conflict";
@@ -87,15 +88,17 @@ export async function saveDraft(params: SaveDraftParams): Promise<SaveDraftResul
   for (const field of params.fields) {
     const id = field.raw.id;
     if (isEditableField(field)) {
-      sentTexts.set(id, field.text.trim());
+      // 送る本文はマス目に合わせた改行を含む(サーバーが持つのも同じ形)。入力欄の text ではなくこちらで比べる
+      const body = renderedText(field);
+      sentTexts.set(id, body.trim());
       sent.set(id, {
-        text: field.text,
+        text: body,
         direction: field.direction,
         fontSize: field.fontSize,
         lineHeight: field.lineHeight,
         color: field.color,
       });
-      local.set(id, fingerprintSent(field.text));
+      local.set(id, fingerprintSent(body));
     } else {
       // 編集できない設問は読み込み時の内容をそのまま送り返すので、送るのは raw の指紋
       local.set(id, fingerprintField(field.raw));

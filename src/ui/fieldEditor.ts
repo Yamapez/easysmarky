@@ -1,6 +1,8 @@
 import { AnswerType, Direction } from "../api/types";
+import { applyGridStyle, renderedText } from "../model/gridLayout";
 import { isEditableField, type EditableField } from "../model/field";
 import { layoutAnswerText } from "../render/answerLayout";
+import { detectRimGrid, type RimGridCounts } from "../render/gridDetect";
 import { measureText } from "../render/measure";
 import { updatePrefs } from "../storage/prefs";
 import { drawCropPreview, type CropRect } from "./cropPreview";
@@ -50,6 +52,11 @@ export interface FieldEditorOptions {
   /** base_sheet.dpi。プレビューに足す余白を実寸(mm)基準で決めるのに使う */
   sheetDpi?: number;
   onChange: (field: EditableField) => void;
+  /**
+   * マス目の検出が終わったときに呼ぶ(開いたときに1回)。内容を保存対象にはしない:
+   * 呼び出し側は値を覚えるだけで、未保存扱いにしないこと(開いただけで保存を促さないため)
+   */
+  onGrid?: (grid: RimGridCounts | null) => void;
 }
 
 export interface FieldEditorHandle {
@@ -195,6 +202,15 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
           rimGuide.style.height = `${(rh / rect.height) * 100}%`;
           rimGuide.style.display = "block";
         }
+        // マス目の検出。答えの無いテキスト設問だけ(答えがあれば既存の大きさ・位置を保つ)。
+        // 検出できたら文字サイズと改行をそのマスに合わせる。保存はしない(onGrid は未保存扱いにしない)
+        if (field.isEditableText && (field.raw.answer_texts ?? []).length === 0) {
+          const counts = detectRimGrid(cropCanvas, rect, field.raw.rim);
+          field.grid = counts;
+          applyGridStyle(field);
+          opts.onGrid?.(counts);
+          refreshFit();
+        }
         // 切り出しが確定してはじめて正しいスケールが出せる。ここで初回描画を試みる
         // (非表示中なら updatePreview は何もせず、後で ResizeObserver が呼び直す)
         window.requestAnimationFrame(updatePreview);
@@ -314,6 +330,7 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       field.fontSize,
       field.lineHeight,
       field.color,
+      field.gridPerLine ?? "-",
       scaleX,
       scaleY,
     ].join(" ");
@@ -506,8 +523,9 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
       fitWarning.style.display = "none";
       return;
     }
+    // 保存と同じ本文(マス目に合わせた改行を含む)で測る
     const size = measureText({
-      text: field.text,
+      text: renderedText(field),
       fontSize: field.fontSize,
       lineHeight: field.lineHeight,
       direction: field.direction as typeof Direction.Horizon,
@@ -534,6 +552,8 @@ export function createFieldEditor(opts: FieldEditorOptions): FieldEditorHandle {
   function setDirection(next: Direction): boolean {
     if (field.direction === next) return false;
     field.direction = next;
+    // 書字方向が変わると、マス目の数える軸も変わる(両方向のピッチは rim と検出結果から出し直す)
+    applyGridStyle(field);
     updatePrefs({ direction: next });
     onEdited();
     return true;

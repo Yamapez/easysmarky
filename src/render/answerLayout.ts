@@ -1,5 +1,6 @@
 import { Direction } from "../api/types";
 import type { EditableField } from "../model/field";
+import { renderedText } from "../model/gridLayout";
 import { measureText } from "./measure";
 import { renderAnswerText } from "./renderText";
 
@@ -36,21 +37,42 @@ export function stampOffsetInCut(
 }
 
 /**
- * 入力テキストを解答欄の中央に置いたときの配置と PNG を返す。
+ * マス目に合わせたときの配置。切り出し原点(rim − cut_margin)からの相対位置で返す
+ * (stampOffsetInCut と同じ座標系。保存される x,y もこの座標系)。
+ * 縦書きは右上のマスから、横書きは左上のマスから文字が始まるように置く。
+ * 縦書きは1行目が右端の列に来る(公式の描画順)ので、ブロックの右端を rim の右端に合わせる。
+ */
+export function gridStampOrigin(
+  rim: [number, number, number, number],
+  direction: number,
+  size: { width: number; height: number },
+  cutMargin: number,
+): { x: number; y: number } {
+  const rimW = rim[2];
+  if (direction === Direction.Vertical) {
+    return { x: rimW + cutMargin - size.width, y: cutMargin };
+  }
+  return { x: cutMargin, y: cutMargin };
+}
+
+/**
+ * 入力テキストを解答欄に置いたときの配置と PNG を返す。
  * 解答用紙プレビュー(fieldEditor)と、解答用紙ビューアの重ね描き(pageViewer)で同じ結果に
- * なるよう、ここを唯一の出所にする。中央配置の式は保存時(model/toParam.ts の buildAnswerText)の
- * 新規入力と同じ。ただし下書きを再開した設問は、保存時は既存の x,y を引き継ぐので、
- * ここの位置と保存結果が少しずれることがある(プレビューも従来どおり中央に出す)。
+ * なるよう、ここを唯一の出所にする。マス目に合わせていない設問は中央に置く(保存時の新規入力と同じ式)。
+ * マス目に合わせた設問は gridStampOrigin で置く(保存時の buildAnswerText も同じ関数を使う)。
+ * 下書きを再開した設問は、保存時は既存の x,y を引き継ぐので、ここの位置と保存結果が少しずれることがある。
  * 文字が無い・大きさ0のときは null(描かない)。
  */
 export function layoutAnswerText(field: EditableField, cutMargin: number): AnswerTextLayout | null {
   const [rimX, rimY, rimW, rimH] = field.raw.rim;
+  const text = renderedText(field);
   const key = [
-    field.text,
+    text,
     field.direction,
     field.fontSize,
     field.lineHeight,
     field.color,
+    field.gridPerLine ?? "-",
     cutMargin,
     rimX,
     rimY,
@@ -61,12 +83,12 @@ export function layoutAnswerText(field: EditableField, cutMargin: number): Answe
   const cached = lastLayouts.get(field.raw.id);
   if (cached && cached.key === key) return cached.layout;
 
-  if (!field.text.trim()) {
+  if (!text.trim()) {
     lastLayouts.delete(field.raw.id);
     return null;
   }
   const size = measureText({
-    text: field.text,
+    text,
     fontSize: field.fontSize,
     lineHeight: field.lineHeight,
     direction: field.direction as typeof Direction.Horizon,
@@ -77,11 +99,13 @@ export function layoutAnswerText(field: EditableField, cutMargin: number): Answe
   }
 
   // 切り出し原点 (rim − cut_margin) からの相対座標を、用紙の絶対座標に直したもの
-  const offset = stampOffsetInCut(rimW, rimH, cutMargin, size);
+  const offset = field.gridPerLine != null
+    ? gridStampOrigin(field.raw.rim, field.direction, size, cutMargin)
+    : stampOffsetInCut(rimW, rimH, cutMargin, size);
   const x = rimX - cutMargin + offset.x;
   const y = rimY - cutMargin + offset.y;
   const png = renderAnswerText({
-    text: field.text,
+    text,
     width: size.width,
     height: size.height,
     font_size: field.fontSize,

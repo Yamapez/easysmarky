@@ -2,6 +2,7 @@ import { fetchDigitalReport } from "../api/endpoints";
 import type { DigitalReportQuery } from "../api/types";
 import { createEditableField, isEditableField, type EditableField } from "../model/field";
 import { layoutAnswerText } from "../render/answerLayout";
+import { applyGridStyle } from "../model/gridLayout";
 import { answerPageSize, answerPageSizeByIndex, questionPageSize } from "../model/sheetGeometry";
 import { checkSaveGuard } from "../model/toParam";
 import { saveDraft } from "../save/save";
@@ -467,7 +468,7 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
     const backup: SheetBackup = {};
     for (const f of fields) {
       if (!isEditable(f)) continue;
-      backup[f.raw.id] = { ...valuesOf(f), base: baseValues.get(f.raw.id) };
+      backup[f.raw.id] = { ...valuesOf(f), base: baseValues.get(f.raw.id), grid: f.grid };
     }
     return backup;
   }
@@ -636,6 +637,19 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       questionSheetWidth: questionSize?.width ?? 0,
       questionSheetHeight: questionSize?.height ?? 0,
       sheetDpi: report.base_sheet?.dpi,
+      onGrid: (grid) => {
+        // マス目の検出結果を、この設問の本体へ覚える。未保存にはしない(開いただけで保存を促さないため)。
+        // エディタは複製を編集するので、本体は id で引き直す(入力後は本体が複製に置き換わっている)
+        const target = fieldById.get(field.raw.id);
+        if (!target) return;
+        target.grid = grid;
+        applyGridStyle(target);
+        // 文字サイズ・改行はマス目から決まる既定値で、利用者の入力ではない。下書きの基準(base)の書式も合わせ、
+        // 復元のときに「触った」と誤認しないようにする(書字方向は利用者が選ぶものなので触らない)
+        const base = baseValues.get(target.raw.id);
+        if (base) baseValues.set(target.raw.id, { ...base, fontSize: target.fontSize, lineHeight: target.lineHeight });
+        viewer.refreshRims();
+      },
       onChange: (changed) => {
         // エディタは複製を編集するので、変更を元の配列へ書き戻す
         const index = fields.findIndex((f) => f.raw.id === changed.raw.id);
@@ -740,6 +754,10 @@ export async function renderFormView(container: HTMLElement, opts: FormViewOptio
       field.fontSize = entry.fontSize;
       field.lineHeight = entry.lineHeight;
       field.color = entry.color;
+      // マス目の検出結果を戻し、同じ文字サイズ・改行に決め直す(戻せない古い下書きは保存値のまま)
+      field.gridPerLine = null;
+      field.grid = entry.grid ?? null;
+      applyGridStyle(field);
     }
     // 復元・元に戻した内容はサーバーに無い可能性があるので、保存するまで未保存扱いにする
     markDirty();
