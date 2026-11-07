@@ -194,13 +194,13 @@ export async function run(ctx) {
   check("D1 確認で了承すると、下書きと選択肢が消える",
     (await storedDraft()) === null && !(await hasButton("破棄する")), null);
 
-  // 復元の前に打ってから破棄すると、自動保存が古い下書きの代わりに書いた今の入力も消える。
-  // その場合は今の入力を書き直し、「自動保存されている」と言ったことを事実にする
+  // 提示に答えるまでは下書きを書かない。打ってから破棄すると、古い下書きだけが消え、
+  // 今の入力は破棄のあとに書き直される(「自動保存されている」と言ったことを事実にする)
   await openHarness(send, `${URL_HARNESS}?scenario=d1restore`);
   await openSheet();
   await sleep(300);
   await setText("破棄の前に打った文");
-  await sleep(700); // 自動保存が、古い下書きの上に今の入力を書く
+  await sleep(700); // 提示が残っている間は下書きは書かれない(今の入力は破棄のあとに書かれる)
   await stubConfirm(true);
   await clickButton("破棄する");
   await sleep(200);
@@ -223,6 +223,16 @@ export async function run(ctx) {
   const pendingStatus = await text(".es-autosave");
   check("D1 提示が残り、ヘッダに自動保存を止めていることを出す",
     (await hasButton("復元する")) && pendingStatus.includes("自動保存を止めています"), pendingStatus);
+  // スマホではヘッダの表示が隠れるので、提示の文言が幅430pxでも見えることを確かめる
+  await setViewport(send, 430, 900);
+  await sleep(200);
+  const pendingNoteVisible = await ev(`(() => {
+    const w = [...${HOST}.querySelectorAll(".es-warning")].find((x) => x.textContent.includes("自動保存されません"));
+    return !!w && w.getBoundingClientRect().height > 0;
+  })()`);
+  check("D1 提示の「自動保存されません」は幅430pxでも見える", pendingNoteVisible === true, pendingNoteVisible);
+  await setViewport(send, 1400, 900);
+  await sleep(200);
 
   await stubConfirm(false);
   await ev(`${sel(".es-header-back")}.click(), true`);
