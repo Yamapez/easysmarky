@@ -9,14 +9,13 @@ import {
 import { checkForUpdate } from "./update/checkForUpdate";
 import { showUpdateToast } from "./update/toast";
 import { dismissVersion } from "./storage/updateState";
+import { addLauncher } from "./ui/launcher";
 
 declare global {
   interface Window {
     __easysmarky?: EasySmarkyController;
   }
 }
-
-const LAUNCHER_ID = "easysmarky-launcher";
 
 function launch(): void {
   window.__easysmarky = createOverlay({ canOpenInNewTab: true });
@@ -39,40 +38,6 @@ function consumeAutostartFlag(): boolean {
   }
 }
 
-function addLauncher(): void {
-  if (document.getElementById(LAUNCHER_ID)) return;
-
-  const button = document.createElement("button");
-  button.id = LAUNCHER_ID;
-  button.type = "button";
-  button.textContent = "easysmarky";
-  button.style.cssText = [
-    "position: fixed",
-    "right: 12px",
-    "bottom: 12px",
-    "z-index: 2147482000", // オーバーレイ(.es-root: 2147483000)より下
-    "padding: 10px 14px",
-    "min-height: 44px",
-    "border: none",
-    "border-radius: 22px",
-    "background: #2196c9",
-    "color: #fff",
-    "font-size: 13px",
-    "font-weight: bold",
-    'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", sans-serif',
-    "box-shadow: 0 2px 10px rgba(0,0,0,0.3)",
-    "cursor: pointer",
-  ].join(";");
-  button.addEventListener("click", () => {
-    if (!window.__easysmarky) {
-      launch();
-      return;
-    }
-    window.__easysmarky.toggle();
-  });
-  document.body.appendChild(button);
-}
-
 async function runUpdateCheck(): Promise<void> {
   try {
     const latest = await checkForUpdate(__EASYSMARKY_VERSION__);
@@ -82,7 +47,13 @@ async function runUpdateCheck(): Promise<void> {
   }
 }
 
-addLauncher();
+addLauncher(() => {
+  if (!window.__easysmarky) {
+    launch();
+    return;
+  }
+  window.__easysmarky.toggle();
+});
 
 if (consumeAutostartFlag()) launch();
 

@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+*.jks
+*.keystore
+# `npm run build` の成果物の写し(Gradle がビルド前にコピーする)
+app/src/main/assets/extension/easysmarky.app.js

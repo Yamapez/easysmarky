@@ -38,6 +38,14 @@ function userscriptBanner(): Plugin {
 
 export default defineConfig(({ mode }) => {
   const isUserscript = mode === "userscript";
+  // Android アプリ(android/)がページへ差し込む版。Pages から配り、APK にも写しを同梱する
+  const isApp = mode === "app";
+  const entry = isUserscript ? "src/userscript.ts" : isApp ? "src/app.ts" : "src/main.ts";
+  const fileName = isUserscript
+    ? "easysmarky.user.js"
+    : isApp
+      ? "easysmarky.app.js"
+      : "easysmarky.iife.js";
   return {
     plugins: isUserscript ? [userscriptBanner()] : [],
     define: {
@@ -45,17 +53,14 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       lib: {
-        entry: resolve(
-          __dirname,
-          isUserscript ? "src/userscript.ts" : "src/main.ts",
-        ),
+        entry: resolve(__dirname, entry),
         name: "EasySmarky",
         formats: ["iife"],
-        fileName: () => (isUserscript ? "easysmarky.user.js" : "easysmarky.iife.js"),
+        fileName: () => fileName,
       },
       outDir: "dist",
-      // userscript ビルドは iife ビルドの後に走るので dist を消さない
-      emptyOutDir: !isUserscript,
+      // userscript・app ビルドは iife ビルドの後に走るので dist を消さない
+      emptyOutDir: !isUserscript && !isApp,
       cssCodeSplit: false,
       minify: true,
     },

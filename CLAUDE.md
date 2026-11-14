@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 概要
 
-学校のデジタルレポート提出サイト「Smarky」( https://digi-repo.smarky.jp )の公式キャンバスUIの代わりに、全設問をフォームで一気に入力できるオーバーレイを提供するブックマークレット/ユーザースクリプト。ブラウザの既存Smarkyセッションをそのまま使い(パスワード非取扱)、**下書き保存までを自動化する。提出は絶対に行わない**。
+学校のデジタルレポート提出サイト「Smarky」( https://digi-repo.smarky.jp )の公式キャンバスUIの代わりに、全設問をフォームで一気に入力できるオーバーレイを提供するブックマークレット/ユーザースクリプト/Android アプリ(`android/`)。ブラウザの既存Smarkyセッションをそのまま使い(パスワード非取扱)、**下書き保存までを自動化する。提出は絶対に行わない**。
 
 ## コマンド
 
 ```bash
-npm run build                    # dist/easysmarky.iife.js と dist/easysmarky.user.js を生成
+npm run build                    # dist/ に easysmarky.iife.js / .user.js / .app.js を生成
 npm run dev                      # watchビルド(ブックマークレット版=iifeのみ)
 npm run verify                   # ビルド + ヘッドレスChromiumでのUI回帰チェック
 ./node_modules/.bin/tsc --noEmit # 型チェック(ビルドは型チェックしないため必須)
@@ -51,19 +51,54 @@ UIは「1設問ずつ集中して入力する」方針で作られている(解�
 ## リリース・デプロイ
 
 - **リリース時は必ず `package.json` の `version` を上げる。** この値が userscript の `@version` に埋め込まれ(vite.config.ts)、Tampermonkey等の自動更新はこの比較で動く。
-- 配布は GitHub Pages(ソース: GitHub Actions)。`gh-pages` ブランチは使わない — `dist/`(`easysmarky.iife.js`・`easysmarky.user.js`・`index.html`)をビルド成果物としてそのままPagesにアップロードする。`index.html` は `public/index.html` が実体で、Viteのpublicディレクトリとして自動的に `dist/` にコピーされる。
+- 配布は GitHub Pages(ソース: GitHub Actions)。`gh-pages` ブランチは使わない — `dist/`(`easysmarky.iife.js`・`easysmarky.user.js`・`easysmarky.app.js`・`index.html`)をビルド成果物としてそのままPagesにアップロードする。`index.html` は `public/index.html` が実体で、Viteのpublicディレクトリとして自動的に `dist/` にコピーされる。
 - **反映は `.github/workflows/deploy-pages.yml` が自動で行う。** `package.json` を変更した push(または手動の `workflow_dispatch`)をトリガーに、型チェック→`npm run verify`→`package.json` の version が直前のコミットから変わっているか確認→変わっていれば `actions/upload-pages-artifact` / `actions/deploy-pages` で `dist/` を配信する。バージョンが変わっていなければ(`workflow_dispatch` 以外は)何もせずスキップする。
 - リポジトリ設定は Settings → Pages → Source を「GitHub Actions」にしておくこと(「Deploy from a branch」ではない)。
 - 旧 `gh-pages` ブランチは移行前の名残で、もう配信には使われていない。
+- Android アプリの APK は Pages ではなく GitHub Release で配る(下の「Android アプリ」を参照)。
 
 ## ビルド構成
 
-`npm run build` は vite を2回実行する:
+`npm run build` は vite を3回実行する:
 
 1. 通常モード → `src/main.ts` をエントリに `easysmarky.iife.js`(ブックマークレット版。ロードと同時にオーバーレイを起動/トグル)
 2. `--mode userscript` → `src/userscript.ts` をエントリに `easysmarky.user.js`(右下に常駐ボタンだけ置き、押されたらオーバーレイを開く)
+3. `--mode app` → `src/app.ts` をエントリに `easysmarky.app.js`(Android アプリがページへ差し込む版。常駐ボタンを置き、生徒としてログイン済みなら1回だけ自動で開く。更新トーストは無い)
 
-userscript ビルドでは vite.config.ts 内のカスタムプラグインが minify 後に UserScript バナーを付与し、`emptyOutDir: false` で1回目の成果物を残す。両エントリとも `window.__easysmarky` にコントローラを置いて二重起動を防ぐ。`bookmarklet/loader.js` はブックマーク登録用ローダーの元コード(圧縮前)。
+userscript ビルドでは vite.config.ts 内のカスタムプラグインが minify 後に UserScript バナーを付与する。2回目・3回目は `emptyOutDir: false` で1回目の成果物を残す。常駐ボタンは `src/ui/launcher.ts`(userscript と app が共有)。両エントリとも `window.__easysmarky` にコントローラを置いて二重起動を防ぐ。`bookmarklet/loader.js` はブックマーク登録用ローダーの元コード(圧縮前)。
+
+## Android アプリ(`android/`)
+
+GeckoView(Firefox のエンジン)を内蔵した、Activity 1つ・Java の小さなブラウザ。WebView ではなく
+GeckoView なのは、Smarky の Google ログイン(全画面リダイレクト方式)を Android 標準 WebView では
+Google が拒否するため。UA の偽装はしない。
+
+```bash
+npm run build && cd android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
+```
+
+- `MainActivity.java` — 画面(GeckoView・初回の「学校のURL」・読み込み失敗・戻るキーのメニュー)。
+  覚えるのは学校の接頭辞(`#/{school_url_prefix}/student_site/…`)だけで、起動時は
+  `…/student_site/sheet_list` を開く(未ログインなら Smarky 自身がログイン画面へ送る)
+- `Prompts.java` — alert / confirm / prompt / select / ファイル選択 / 離脱確認。GeckoView は自前では
+  何も出さないので、**これが無いと `window.confirm` が黙って false になり、「破棄する」
+  「上書きして保存」が効かなくなる**
+- `assets/extension/` — 内蔵 WebExtension。`inject.js` がページに `<script>` を足す(ブックマークレットと
+  同じ「ページ内で実行」の経路)。Pages の `easysmarky.app.js` を先に読み、失敗したら APK 同梱の写し
+  (Gradle が `dist/easysmarky.app.js` をビルド前にコピーする。gitignore 済み)を読む
+- **アプリの殻は Smarky の API を呼ばない。パスワードもアクセストークンも読まない・保存しない・
+  書き換えない。** Smarky の `access_token` は有効期限なしの Cookie なので、アプリが完全に終了すると
+  再ログインになる見込みだが、殻の側でトークンを延命する処理は入れないこと
+- GeckoView 160 は compileSdk 37.2 を要求する(SDK Platform 37.2、AGP 9.5.1、Gradle 9.6.0)。
+  APK は ABI ごとに分け、`.so` を圧縮して約100MB(無圧縮だと約200MB)
+- エミュレータ(x86_64)で確認できるのは、表示・差し込み・ダイアログ・キーボード追従・
+  ハーネス上の保存まで。**実際のログイン(Google / ID・PW)、実サーバへの保存、アプリ終了後の
+  ログイン状態は実機でしか確認できない**。デバッグ版は
+  `am start … -a android.intent.action.VIEW -d <URL> --ez debugAnyUrl true` で任意のページを開ける
+- 配布は `.github/workflows/release-android.yml`。Pages への配信(`deploy-pages.yml`)が成功したあとに
+  同じコミットから署名済み APK を作り、GitHub Release `v{version}` に添付する。署名鍵は Secrets
+  (`ANDROID_KEYSTORE_BASE64` ほか)。未登録、またはその版の Release がすでにあれば何もしない
 
 ## アーキテクチャ
 
