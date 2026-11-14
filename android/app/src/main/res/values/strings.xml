@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">easysmarky</string>
+
+    <string name="cancel">キャンセル</string>
+
+    <!-- 最初の画面(学校のURLを覚える) -->
+    <string name="setup_title">学校の Smarky を開く</string>
+    <string name="setup_body">学校から案内された Smarky のURLを貼り付けてください。次からは、アプリを開くだけでレポートの一覧になります。</string>
+    <string name="setup_hint">https://digi-repo.smarky.jp/#/…</string>
+    <string name="setup_paste">貼り付け</string>
+    <string name="setup_open">開く</string>
+    <string name="setup_error">Smarky(digi-repo.smarky.jp)のURLが見つかりません。</string>
+    <string name="setup_note">ログインは Smarky と Google の公式ページで行います。このアプリはパスワードを読み取りません。\n\n自動で行うのは下書き保存までです。提出は行いません。</string>
+
+    <!-- 読み込みの失敗 -->
+    <string name="error_title">ページを開けませんでした</string>
+    <string name="error_body">通信状況を確認してから、もう一度お試しください。</string>
+    <string name="error_retry">もう一度読み込む</string>
+
+    <!-- 戻る先が無いときのメニュー -->
+    <string name="menu_reload">再読み込み</string>
+    <string name="menu_change_url">学校のURLを変更</string>
+    <string name="menu_exit">アプリを閉じる</string>
+
+    <!-- ページが出す確認 -->
+    <string name="leave_message">このページを離れますか?\n入力した内容が保存されていない可能性があります。</string>
+    <string name="leave_yes">離れる</string>
+    <string name="leave_no">とどまる</string>
+    <string name="repost_message">このページを表示するには、フォームの内容をもう一度送信する必要があります。</string>
+    <string name="repost_yes">再送信</string>
+</resources>

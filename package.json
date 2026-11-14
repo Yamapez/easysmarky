@@ -1,6 +1,6 @@
 {
   "name": "easysmarky",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite build --watch --mode development",
-    "build": "vite build && vite build --mode userscript",
+    "build": "vite build && vite build --mode userscript && vite build --mode app",
     "verify": "npm run build && node tools/verify/drive.mjs",
     "preview": "vite preview"
   },

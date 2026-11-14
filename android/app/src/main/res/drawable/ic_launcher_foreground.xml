@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 解答欄 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,36h40a4,4 0,0 1,4 4v28a4,4 0,0 1,-4 4h-40a4,4 0,0 1,-4 -4v-28a4,4 0,0 1,4 -4z" />
+    <!-- 入力済みの文字(2マスぶん) -->
+    <path
+        android:fillColor="#2196C9"
+        android:pathData="M37,45h9v9h-9z M49,45h9v9h-9z" />
+    <!-- カーソル -->
+    <path
+        android:fillColor="#0B4F6C"
+        android:pathData="M62,43h3v13h-3z" />
+    <!-- 次の行(未入力) -->
+    <path
+        android:fillColor="#CFE8F3"
+        android:pathData="M37,59h34v4h-34z" />
+</vector>

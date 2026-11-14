@@ -1,7 +1,7 @@
 # easysmarky
 
 学校のデジタルレポート提出サイト「Smarky」( https://digi-repo.smarky.jp )の入力を
-もっと楽にするためのブックマークレット/ユーザースクリプトです。用紙画像の上に
+もっと楽にするためのブックマークレット/ユーザースクリプト/Android アプリです。用紙画像の上に
 テキストボックスを1個ずつ配置していくSmarky公式のキャンバスUIの代わりに、
 解答用紙の解答欄をタップして1設問ずつ入力していく画面を重ねて表示します。
 
@@ -19,7 +19,10 @@
 
 ## インストール
 
-導入方法は2通りあり、どちらか一方でかまいません(併用も可)。迷ったら
+**Android の方は、専用アプリがいちばん簡単です**(入れて開くだけ。ブラウザの設定も拡張機能も
+要りません)→ [Android アプリ](#android-アプリ)
+
+それ以外の導入方法は2通りあり、どちらか一方でかまいません(併用も可)。迷ったら
 **ユーザースクリプト版**がおすすめです(自動更新があり、起動もボタン1つで済みます)。
 
 |  | ユーザースクリプト版 | ブックマークレット版 |
@@ -27,7 +30,33 @@
 | 必要なもの | ユーザースクリプト管理用の拡張機能/アプリ | なし(標準ブラウザ機能のみ) |
 | 起動方法 | ページ右下に常駐するボタンをタップ | 登録したブックマークをクリック |
 | バージョン更新 | 自動 | ブックマークの貼り替えが必要な場合あり |
-| Android Chrome | 拡張機能未対応のため**使えません**(→Firefox等を利用) | 使えます(手順に注意) |
+| Android Chrome | 拡張機能未対応のため**使えません**(→Android アプリか Firefox 等を利用) | 使えます(手順に注意) |
+
+### Android アプリ
+
+Smarky を開いて easysmarky を自動で読み込む、専用の小さなブラウザです。Firefox のエンジン
+(GeckoView)を内蔵しているので、Google アカウントでのログインもそのまま使えます。
+
+1. 端末で APK をダウンロードする(約100MB)
+   - ほとんどの端末: [easysmarky-arm64-v8a.apk](https://github.com/Yamapez/easysmarky/releases/latest/download/easysmarky-arm64-v8a.apk)
+   - 古い32bitの端末: [easysmarky-armeabi-v7a.apk](https://github.com/Yamapez/easysmarky/releases/latest/download/easysmarky-armeabi-v7a.apk)
+2. ダウンロードしたファイルを開いてインストールする。Play ストア以外からのインストールなので、
+   「この提供元のアプリを許可」を求められたら許可する
+3. アプリを開き、**学校から案内された Smarky のURL**を貼り付けて「開く」
+   (ブラウザで Smarky を開き、共有メニューから easysmarky を選んでも渡せます)
+4. いつもどおり Smarky にログインする(ID・パスワードでも、Google アカウントでも)。
+   ログインすると easysmarky が自動で開きます。右下の「easysmarky」ボタンで開閉できます
+
+次からは、アプリを開くだけでレポートの一覧になります。
+
+- ログインは Smarky と Google の公式ページに直接入力します。アプリはパスワードやログイン情報を
+  読み取りません。覚えるのは学校のURLの一部だけです
+- easysmarky 本体は起動のたびに最新を読み込みます(読み込めないときはアプリ同梱の版を使います)。
+  アプリ自体を更新するときは、新しい APK を上から入れ直してください
+- 入力中の下書きはアプリの中に保存されます。ほかのブラウザで書いた下書きは引き継がれません
+- アプリを完全に終了したあとは、Smarky へのログインをもう一度求められることがあります
+- 端末の「戻る」は前の画面に戻ります。戻る先が無いときはメニュー(再読み込み・学校のURLを変更・
+  アプリを閉じる)が出ます
 
 ### ユーザースクリプト版
 
@@ -64,6 +93,7 @@ https://yamapez.github.io/easysmarky/easysmarky.user.js
 
 #### Android
 
+Android では [Android アプリ](#android-アプリ)がいちばん簡単です。
 Android版Chromeは拡張機能に対応していないため、ユーザースクリプト版を使う場合は
 Firefox(+Tampermonkey)などの対応ブラウザをご利用ください。
 Chromeのまま使いたい場合は下記のブックマークレット版をどうぞ。
@@ -175,7 +205,7 @@ javascript:(function(){var u="https://yamapez.github.io/easysmarky/easysmarky.ii
 
 ```bash
 npm install
-npm run build   # dist/easysmarky.iife.js と dist/easysmarky.user.js を生成
+npm run build   # dist/ に easysmarky.iife.js / .user.js / .app.js(Android アプリ用)を生成
 npm run dev     # watchモードでビルド(ブックマークレット版のみ)
 ```
 
@@ -197,3 +227,27 @@ GitHub Pages(ソース: GitHub Actions)で公開しています( https://yamapez
 (バージョンを上げていないpushでは何もしません)。手動で反映したい場合はGitHub Actionsの
 `workflow_dispatch` から実行してください。ブックマークレットのローダーは
 `?v=<timestamp>` を自動付与するため、ブラウザキャッシュを気にせず更新を反映できます。
+
+### Android アプリ(`android/`)
+
+GeckoView(Firefox のエンジン、MPL 2.0)を内蔵した、Activity 1つの小さなアプリです。
+内蔵の拡張機能(`android/app/src/main/assets/extension/`)が Smarky のページに
+`easysmarky.app.js` を差し込みます。アプリ自身は Smarky の API を呼びません。
+
+```bash
+npm run build                      # 先に必要(APK に同梱する dist/easysmarky.app.js を作る)
+cd android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk   # エミュレータは x86_64 の方
+```
+
+- 必要なもの: JDK 17 以上、Android SDK Platform 37.2(GeckoView 160 の要求)
+- 版(`versionName` / `versionCode`)は `package.json` の `version` から決まります
+- デバッグ版だけ、動作確認用に任意のページを開けます:
+  `adb shell am start -n io.github.yamapez.easysmarky/.MainActivity -a android.intent.action.VIEW -d <URL> --ez debugAnyUrl true`
+  (`tools/verify/harness.html` をローカルで配信して開くと、ログインなしで入力・保存まで試せます)
+- 配布用の APK は `.github/workflows/release-android.yml` が、Pages への配信が成功したあとに
+  署名して GitHub Release に添付します。署名鍵はリポジトリの Secrets
+  (`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` /
+  `ANDROID_KEY_PASSWORD`)に置きます。未登録の間は何もしません。
+  **鍵を失うと、利用者は入れ直し(アプリ内の下書きも消える)になるので、必ず控えを取ってください**

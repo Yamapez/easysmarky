@@ -1,0 +1,101 @@
+name: Release Android app
+
+# Pages への配信(型チェックと UI 回帰チェックを含む)が成功したあとに、同じコミットから
+# Android アプリの APK を作って GitHub Release に添付する。
+# その版の Release がすでにあれば何もしない(手動実行のときは作り直して上書きする)。
+on:
+  workflow_run:
+    workflows: ["Deploy to GitHub Pages"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-android
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Decide whether to release
+        id: gate
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::署名鍵(ANDROID_KEYSTORE_BASE64)が未登録のため、APK は作りません。"
+          elif [ "${{ github.event_name }}" != "workflow_dispatch" ] && gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$VERSION の Release はすでにあります。"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build easysmarky (APK に同梱する写し)
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup Java
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install Android SDK platform
+        if: steps.gate.outputs.skip != 'true'
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.2" > /dev/null
+
+      - name: Build signed APKs
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: android
+        env:
+          EASYSMARKY_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          EASYSMARKY_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          EASYSMARKY_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export EASYSMARKY_KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$EASYSMARKY_KEYSTORE"
+          ./gradlew --no-daemon assembleRelease
+          rm -f "$EASYSMARKY_KEYSTORE"
+
+      - name: Publish to GitHub Release
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          VERSION="${{ steps.gate.outputs.version }}"
+          OUT=android/app/build/outputs/apk/release
+          mkdir -p release
+          # 配るのは実機向けの2種類だけ(x86_64 はエミュレータでの確認用)
+          cp "$OUT/app-arm64-v8a-release.apk" release/easysmarky-arm64-v8a.apk
+          cp "$OUT/app-armeabi-v7a-release.apk" release/easysmarky-armeabi-v7a.apk
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" release/*.apk --clobber
+          else
+            gh release create "v$VERSION" release/*.apk \
+              --target "${{ github.event.workflow_run.head_sha || github.sha }}" \
+              --title "v$VERSION" \
+              --notes "Android アプリ(APK)。ほとんどの端末は easysmarky-arm64-v8a.apk を入れてください。入れ方は README の「Android アプリ」を参照。"
+          fi

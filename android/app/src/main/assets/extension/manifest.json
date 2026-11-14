@@ -1,0 +1,18 @@
+{
+  "manifest_version": 2,
+  "name": "easysmarky",
+  "version": "1.0",
+  "description": "Smarky のページに easysmarky を読み込む(アプリ内蔵)",
+  "browser_specific_settings": {
+    "gecko": { "id": "easysmarky@yamapez.github.io" }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://digi-repo.smarky.jp/*"],
+      "js": ["inject.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": ["easysmarky.app.js"]
+}
